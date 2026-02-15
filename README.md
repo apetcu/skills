@@ -1,69 +1,57 @@
 # Skills
 
-A collection of custom skills for Claude Code.
+A collection of custom agent skills for AI coding assistants (Claude Code, Cursor, etc.). Licensed under [Apache License 2.0](LICENSE). Each skill adds specialized capabilities—design systems, diagram generation, publishing workflows—that can be invoked when relevant.
 
 ## What are Skills?
 
-Skills are modular capabilities that extend Claude's functionality with specialized knowledge, workflows, or tool integrations. Each skill is self-contained and can be invoked when needed.
+Skills are modular capabilities that extend an AI assistant with focused knowledge, workflows, or tool integrations. Each skill is self-contained (a folder with a `SKILL.md` file) and is activated when the task matches the skill’s description or triggers.
 
 ## Structure
 
-This repository is organized as follows:
-
 ```
 skills/
-├── skills/           # Individual skill directories
-│   ├── skill-1/      # First skill
-│   └── skill-2/      # Second skill
-└── README.md         # This file
-```
-
-## Using Skills
-
-Skills can be invoked in Claude Code by:
-- Using the `/skill-name` command
-- Referencing them in conversation when relevant
-- Claude will automatically suggest applicable skills based on context
-
-## Skill Format
-
-Each skill is contained in its own folder with a `SKILL.md` file that includes:
-
-```yaml
----
-name: skill-name
-description: A clear description of what this skill does and when to use it
----
-
-# Skill Name
-
-[Instructions that Claude will follow when this skill is active]
-
-## Examples
-- Example usage 1
-- Example usage 2
-
-## Guidelines
-- Guideline 1
-- Guideline 2
+├── skills/
+│   ├── beautiful-ui/        # Glassmorphism UI with Next.js + Tailwind v4
+│   ├── beautiful-diagrams/  # Article diagrams via HTML + Playwright
+│   └── substack-publisher/  # Publish markdown to Substack
+└── README.md
 ```
 
 ## Available Skills
 
-Skills in this repository:
-- Add your skills here after creating them
+| Skill | Description |
+|-------|-------------|
+| **beautiful-ui** | Build glassmorphism dark-mode interfaces with Next.js and Tailwind CSS v4: translucent surfaces, luminous palettes, Framer Motion, and production-ready code. |
+| **beautiful-diagrams** | Generate article-ready diagrams (pipelines, sequences, grids) using HTML + Playwright screenshots—canvas background, gradient cards, clean typography. |
+| **substack-publisher** | Publish markdown posts to Substack as drafts or articles; converts markdown to Substack’s ProseMirror JSON and supports dry-run. |
 
-## Creating New Skills
+## Using Skills
 
-To create a new skill:
+Depending on your environment:
 
-1. Create a new folder in `skills/` with your skill name (use kebab-case)
-2. Add a `SKILL.md` file with the required frontmatter and instructions
-3. Update this README to list the new skill
+- **Claude Code** — Use `/skill-name`, reference the skill in conversation, or let Claude suggest it from context.
+- **Cursor** — Skills under `.cursor/skills/` or linked from agent skills are suggested automatically when the conversation matches their description.
 
-## Contributing
+## Skill Format
 
-Add your custom skills by creating new folders in the `skills/` directory following the standard skill format.
+Each skill lives in its own folder with a `SKILL.md` file. Frontmatter defines name and when to use it; the body holds instructions the model follows when the skill is active.
+
+```yaml
+---
+name: skill-name
+description: When to use this skill and what it does
+---
+
+# Skill Name
+
+[Instructions, examples, and guidelines]
+```
+
+## Adding New Skills
+
+1. Create a folder in `skills/` (e.g. `skills/my-skill/`).
+2. Add `SKILL.md` with the YAML frontmatter and instructions.
+3. Add the skill to the **Available Skills** table in this README.
 
 ## Resources
 
