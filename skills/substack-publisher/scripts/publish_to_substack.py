@@ -120,20 +120,8 @@ def parse_markdown(filepath):
         # Everything else goes to body
         body_lines.append(stripped)
 
-    # Split hook: first paragraph -> subtitle, rest -> prepend to body
-    hook_text = "\n".join(subtitle_lines).strip()
-    if hook_text:
-        # Split on first blank line or --- divider to get first paragraph
-        parts = re.split(r'\n\s*\n', hook_text, maxsplit=1)
-        subtitle = parts[0].strip()
-        if len(parts) > 1:
-            # Remove leading --- divider if present
-            remainder = parts[1].strip()
-            remainder = re.sub(r'^---\s*\n?', '', remainder).strip()
-            if remainder:
-                body_lines = remainder.split("\n") + [""] + body_lines
-    else:
-        subtitle = ""
+    # Clean up subtitle
+    subtitle = "\n".join(subtitle_lines).strip()
 
     # Clean up body - remove leading/trailing blank lines
     while body_lines and not body_lines[0].strip():
@@ -385,6 +373,7 @@ def md_to_prosemirror(markdown, base_dir="."):
 
         # Regular paragraph
         para_lines = []
+        start_i = i
         while i < len(lines):
             s = lines[i].strip()
             if not s:
@@ -403,6 +392,9 @@ def md_to_prosemirror(markdown, base_dir="."):
         if para_lines:
             text = " ".join(para_lines)
             content.append(make_paragraph(text))
+        elif i == start_i:
+            # Safety: skip unrecognized line to prevent infinite loop
+            i += 1
 
     doc = {"type": "doc", "content": content if content else [{"type": "paragraph"}]}
     return doc, local_images
@@ -461,34 +453,43 @@ def get_image_dimensions(image_bytes):
 
 def upload_image(config, image_path, post_id):
     """
-    Upload a local image to Substack.
+    Upload a local image to Substack via curl.
 
     Returns: dict with image metadata, or None on failure.
     """
+    import subprocess
+
     image_bytes = Path(image_path).read_bytes()
     mime_type = detect_mime_type(image_bytes)
     b64_data = base64.b64encode(image_bytes).decode("ascii")
     data_uri = f"data:{mime_type};base64,{b64_data}"
 
     url = f"https://{config['subdomain']}.substack.com/api/v1/image"
-    payload = {
+    payload = json.dumps({
         "image": data_uri,
         "postId": post_id,
-    }
+    })
 
     headers = _make_headers(config)
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    cmd = ["curl", "-s", "-X", "POST", url, "--max-time", "120"]
+    for k, v in headers.items():
+        cmd.extend(["-H", f"{k}: {v}"])
+    cmd.extend(["-d", payload])
 
     try:
-        with urllib.request.urlopen(req, timeout=120) as response:
-            result = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode("utf-8")
-        print(f"Image upload error ({e.code}): {error_body}", file=sys.stderr)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=125)
+    except subprocess.TimeoutExpired:
+        print(f"Image upload timed out: {image_path}", file=sys.stderr)
         return None
-    except urllib.error.URLError as e:
-        print(f"Image upload network error: {e.reason}", file=sys.stderr)
+
+    if proc.returncode != 0 or not proc.stdout.strip():
+        print(f"Image upload failed: {proc.stderr}", file=sys.stderr)
+        return None
+
+    try:
+        result = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        print(f"Image upload: invalid response: {proc.stdout[:200]}", file=sys.stderr)
         return None
 
     width, height = get_image_dimensions(image_bytes)
@@ -567,13 +568,54 @@ def resolve_local_images(config, doc, local_images, post_id):
 
 # --- API helpers ---
 
+SUBTITLE_MAX_LENGTH = 140
+
+
+def _curl_request(url, method, headers, payload=None, timeout=30):
+    """Make HTTP request via curl subprocess.
+
+    Uses curl instead of urllib to avoid Cloudflare blocking in
+    non-interactive or sandboxed shell environments.
+    """
+    import subprocess
+
+    cmd = ["curl", "-s", "-X", method, url, "--max-time", str(timeout)]
+    for k, v in headers.items():
+        cmd.extend(["-H", f"{k}: {v}"])
+    if payload is not None:
+        cmd.extend(["-d", json.dumps(payload)])
+
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
+
+    if result.returncode != 0:
+        print(f"curl failed (exit {result.returncode}): {result.stderr}", file=sys.stderr)
+        sys.exit(1)
+
+    body = result.stdout
+    if not body.strip():
+        print("Error: Empty response from Substack API", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        print(f"Error: Invalid JSON response: {body[:500]}", file=sys.stderr)
+        sys.exit(1)
+
+    if "errors" in data:
+        print(f"API Error: {json.dumps(data['errors'], indent=2)}", file=sys.stderr)
+        sys.exit(1)
+
+    return data
+
+
 def _make_headers(config):
     """Build HTTP headers that pass Cloudflare checks."""
     base_url = f"https://{config['subdomain']}.substack.com"
     return {
         "Content-Type": "application/json",
         "Cookie": f"substack.sid={config['sid']}",
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
         "Accept": "*/*",
         "Accept-Language": "en-US,en;q=0.9",
         "Origin": base_url,
@@ -584,13 +626,22 @@ def _make_headers(config):
     }
 
 
+def _truncate_subtitle(subtitle):
+    """Truncate subtitle to Substack's max length."""
+    if subtitle and len(subtitle) > SUBTITLE_MAX_LENGTH:
+        truncated = subtitle[:SUBTITLE_MAX_LENGTH - 3].rsplit(" ", 1)[0] + "..."
+        print(f"Subtitle truncated to {SUBTITLE_MAX_LENGTH} chars", file=sys.stderr)
+        return truncated
+    return subtitle
+
+
 def create_draft(config, title, subtitle, body_json, audience="everyone"):
     """Create a draft on Substack. Returns: draft data dict."""
     url = f"https://{config['subdomain']}.substack.com/api/v1/drafts"
 
     payload = {
         "draft_title": title,
-        "draft_subtitle": subtitle,
+        "draft_subtitle": _truncate_subtitle(subtitle),
         "draft_podcast_url": None,
         "draft_podcast_duration": None,
         "draft_body": json.dumps(body_json),
@@ -601,27 +652,7 @@ def create_draft(config, title, subtitle, body_json, audience="everyone"):
         "type": "newsletter",
     }
 
-    headers = _make_headers(config)
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-
-    try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            result = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode("utf-8")
-        if e.code in (401, 403):
-            print("Error: Authentication failed. Your SUBSTACK_SID may be expired.", file=sys.stderr)
-            print(f"Detail: {error_body}", file=sys.stderr)
-            print("Get a fresh cookie from your browser's DevTools.", file=sys.stderr)
-        else:
-            print(f"API Error ({e.code}): {error_body}", file=sys.stderr)
-        sys.exit(1)
-    except urllib.error.URLError as e:
-        print(f"Network Error: {e.reason}", file=sys.stderr)
-        sys.exit(1)
-
-    return result
+    return _curl_request(url, "POST", _make_headers(config), payload)
 
 
 def update_draft(config, draft_id, title, subtitle, body_json, audience="everyone"):
@@ -630,7 +661,7 @@ def update_draft(config, draft_id, title, subtitle, body_json, audience="everyon
 
     payload = {
         "draft_title": title,
-        "draft_subtitle": subtitle,
+        "draft_subtitle": _truncate_subtitle(subtitle),
         "draft_podcast_url": None,
         "draft_podcast_duration": None,
         "draft_body": json.dumps(body_json),
@@ -641,45 +672,13 @@ def update_draft(config, draft_id, title, subtitle, body_json, audience="everyon
         "type": "newsletter",
     }
 
-    headers = _make_headers(config)
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers=headers, method="PUT")
-
-    try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            result = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode("utf-8")
-        print(f"Update draft error ({e.code}): {error_body}", file=sys.stderr)
-        sys.exit(1)
-    except urllib.error.URLError as e:
-        print(f"Network Error: {e.reason}", file=sys.stderr)
-        sys.exit(1)
-
-    return result
+    return _curl_request(url, "PUT", _make_headers(config), payload)
 
 
 def publish_draft(config, draft_id):
     """Publish an existing draft on Substack."""
     url = f"https://{config['subdomain']}.substack.com/api/v1/drafts/{draft_id}/publish"
-
-    payload = {"send": True}
-    headers = _make_headers(config)
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-
-    try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            result = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode("utf-8")
-        print(f"Publish Error ({e.code}): {error_body}", file=sys.stderr)
-        sys.exit(1)
-    except urllib.error.URLError as e:
-        print(f"Network Error: {e.reason}", file=sys.stderr)
-        sys.exit(1)
-
-    return result
+    return _curl_request(url, "POST", _make_headers(config), {"send": True})
 
 
 def main():
@@ -691,14 +690,12 @@ Examples:
   %(prog)s post.md --dry-run
   %(prog)s post.md --title "Custom Title"
   %(prog)s post.md --publish --audience everyone
-  %(prog)s post.md --update 187272495
         """,
     )
     parser.add_argument("file", help="Markdown file to publish")
     parser.add_argument("--title", help="Override post title (default: from # heading)")
     parser.add_argument("--subtitle", help="Override subtitle (default: from ## Hook)")
     parser.add_argument("--publish", action="store_true", help="Publish immediately (default: draft only)")
-    parser.add_argument("--update", metavar="POST_ID", type=int, help="Update an existing draft/post by ID instead of creating a new one")
     parser.add_argument(
         "--audience",
         choices=["everyone", "paid"],
@@ -735,31 +732,8 @@ Examples:
         print(json.dumps(body_json, indent=2))
         return
 
+    # Create draft
     config = get_config()
-
-    # Update existing post
-    if args.update:
-        draft_id = args.update
-        draft_url = f"https://{config['subdomain']}.substack.com/publish/post/{draft_id}"
-        print(f"Updating post {draft_id} on {config['subdomain']}.substack.com...", file=sys.stderr)
-
-        # Upload local images first
-        if local_images:
-            body_json = resolve_local_images(config, body_json, local_images, draft_id)
-
-        update_draft(config, draft_id, title, subtitle, body_json, args.audience)
-        print(f"Draft body updated.", file=sys.stderr)
-
-        # Re-publish to push changes live
-        print("Re-publishing to apply changes...", file=sys.stderr)
-        result = publish_draft(config, draft_id)
-        slug = result.get("slug", "")
-        post_url = f"https://{config['subdomain']}.substack.com/p/{slug}"
-        print(f"Published: {post_url}", file=sys.stderr)
-        print(post_url)
-        return
-
-    # Create new draft
     print(f"Creating draft on {config['subdomain']}.substack.com...", file=sys.stderr)
 
     draft = create_draft(config, title, subtitle, body_json, args.audience)
