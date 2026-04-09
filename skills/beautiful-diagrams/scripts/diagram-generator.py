@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Generate beautiful article diagrams using HTML + Playwright screenshots.
-Design: Canvas (#F5F1EC) background, gradient service cards, Inter font,
-box shadows, emoji icons, brand colors.
+Dark minimal design: flat dark background, structural grid, wireframe cards,
+bold Inter typography, near-monochrome palette.
 
 Supports three diagram types:
   - pipeline: Horizontal flow of service cards with connectors
@@ -26,10 +26,49 @@ from playwright.sync_api import sync_playwright
 
 FONT_STACK = "'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif"
 MONO_STACK = "'SF Mono', 'Fira Code', 'Consolas', monospace"
-CANVAS_BG = "#F5F1EC"
-CHARCOAL = "#36454F"
+CANVAS_BG = "#0F0F0F"
+CHARCOAL = "rgba(255,255,255,0.50)"
 
-# Pre-defined service color palettes (name -> [gradient_start, gradient_end])
+GRID_BG_CSS = """
+    background-image:
+        linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+    background-size: 60px 60px;
+"""
+
+# Icon names that map to @carbon/icons package on unpkg CDN (Apache 2.0).
+# Use icon name as the "icon" field value in JSON configs instead of emoji.
+# Falls back to rendering as emoji if the name doesn't look like a Carbon icon.
+CARBON_ICON_NAMES = {
+    "document", "document-tasks", "compass", "machine-learning", "activity",
+    "branch", "renew", "flash", "cognitive", "rule", "code", "settings",
+    "deploy", "cloud", "api", "terminal", "data", "user", "rocket", "search",
+    "warning", "checkmark", "close", "send", "notification", "network",
+}
+CARBON_CDN = "https://unpkg.com/@carbon/icons/svg/32"
+
+
+def render_icon(icon_value, size=13):
+    """Render an icon as either a Carbon CDN reference or emoji.
+
+    If icon_value matches a known Carbon icon name, renders an <img> tag
+    pointing to the @carbon/icons package on unpkg (Apache 2.0 licensed).
+    Otherwise, renders the value as-is (emoji).
+    """
+    if not icon_value:
+        return ""
+    # Check Carbon icons (case-insensitive, allow underscores for hyphens)
+    lookup = icon_value.lower().replace("_", "-").strip()
+    if lookup in CARBON_ICON_NAMES:
+        url = f"{CARBON_CDN}/{lookup}.svg"
+        return (
+            f'<img src="{url}" width="{size}" height="{size}" '
+            f'style="flex-shrink:0; filter:brightness(0) invert(1);" />'
+        )
+    # Fallback: render as emoji text
+    return icon_value
+
+
 SERVICE_COLORS = {
     "slack": ["#4A154B", "#3a1040"],
     "cloudflare": ["#F48120", "#d06a10"],
@@ -130,6 +169,7 @@ def generate_pipeline(config):
     nodes = config.get("nodes", [])
     connectors = config.get("connectors", [])
     width = config.get("width", 900)
+    height = config.get("height", None)
 
     # Build node HTML
     node_htmls = []
@@ -142,7 +182,7 @@ def generate_pipeline(config):
         components = node.get("components", [])
         trigger = node.get("trigger", False)
 
-        icon_html = f'<div class="icon">{icon}</div>' if icon else ""
+        icon_html = f'<div class="icon">{render_icon(icon)}</div>' if icon else ""
         desc_html = f'<div class="desc">{desc}</div>' if desc else ""
 
         # Trigger node: top trigger box + vertical arrow + optional child card below
@@ -151,8 +191,8 @@ def generate_pipeline(config):
             trigger_desc_html = f'<div class="cmd">{trigger_desc}</div>' if trigger_desc else ""
             node_html = f"""
   <div class="slack-col">
-    <div class="trigger" style="background: linear-gradient(135deg, {colors[0]}, {colors[1]});">
-      {f'<div class="icon">{icon}</div>' if icon else ""}
+    <div class="trigger" style="background: transparent; border: 1px solid {colors[0]}33;">
+      {f'<div class="icon">{render_icon(icon)}</div>' if icon else ""}
       <div>
         <div class="text">{name}</div>
         {trigger_desc_html}
@@ -168,10 +208,10 @@ def generate_pipeline(config):
                 ch_name = child.get("name", "")
                 ch_desc = child.get("desc", "")
                 ch_w = child.get("width", 130)
-                ch_icon_html = f'<div class="icon">{ch_icon}</div>' if ch_icon else ""
+                ch_icon_html = f'<div class="icon">{render_icon(ch_icon)}</div>' if ch_icon else ""
                 ch_desc_html = f'<div class="desc">{ch_desc}</div>' if ch_desc else ""
                 node_html += f"""
-    <div class="service" style="background: linear-gradient(135deg, {ch_colors[0]}, {ch_colors[1]}); width: {ch_w}px;">
+    <div class="service" style="background: transparent; border: 1px solid {ch_colors[0]}33; width: {ch_w}px;">
       <div class="service-header">
         {ch_icon_html}
         <div>
@@ -195,7 +235,7 @@ def generate_pipeline(config):
                 tag_html = f'<div class="cat-tag">{comp_tag}</div>' if comp_tag else ""
                 comp_html += f"""
       <div class="comp">
-        <div class="comp-icon">{comp_icon}</div>
+        <div class="comp-icon">{render_icon(comp_icon, size=12)}</div>
         <div>
           <div class="comp-name">{comp_name}</div>
           <div class="comp-desc">{comp_desc}</div>
@@ -205,7 +245,7 @@ def generate_pipeline(config):
             comp_html += "\n    </div>"
 
             node_html = f"""
-  <div class="service" style="background: linear-gradient(135deg, {colors[0]}, {colors[1]}); flex: 1;">
+  <div class="service" style="background: transparent; border: 1px solid {colors[0]}33; flex: 1;">
     <div class="service-header">
       {icon_html}
       <div>
@@ -217,7 +257,7 @@ def generate_pipeline(config):
   </div>"""
         else:
             node_html = f"""
-  <div class="service service-mid" style="background: linear-gradient(135deg, {colors[0]}, {colors[1]}); width: {node_w}px;">
+  <div class="service service-mid" style="background: transparent; border: 1px solid {colors[0]}33; width: {node_w}px;">
     <div class="service-header">
       {icon_html}
       <div>
@@ -273,9 +313,12 @@ def generate_pipeline(config):
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
   body {{
     width: {width}px;
+    {f'height: {height}px;' if height else ''}
     padding: 20px 24px 20px;
     background: {CANVAS_BG};
+    {GRID_BG_CSS}
     font-family: {FONT_STACK};
+    {('display: flex; align-items: center; justify-content: center;') if height else ''}
   }}
   .pipeline {{
     display: flex;
@@ -294,7 +337,6 @@ def generate_pipeline(config):
     gap: 10px;
     padding: 10px 18px;
     border-radius: 10px;
-    box-shadow: 0 3px 12px rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.08);
   }}
   .trigger .icon {{ font-size: 18px; }}
   .trigger .text {{
@@ -325,7 +367,6 @@ def generate_pipeline(config):
   }}
   .service {{
     border-radius: 12px;
-    box-shadow: 0 3px 12px rgba(0,0,0,0.12), 0 1px 3px rgba(0,0,0,0.08);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -341,7 +382,8 @@ def generate_pipeline(config):
     width: 26px;
     height: 26px;
     border-radius: 6px;
-    background: rgba(255,255,255,0.18);
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.12);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -523,6 +565,7 @@ def generate_sequence(config):
     actors = config.get("actors", [])
     steps = config.get("steps", [])
     width = config.get("width", 890)
+    height = config.get("height", None)
     n_actors = len(actors)
 
     # Calculate actor positions (evenly spaced)
@@ -541,7 +584,7 @@ def generate_sequence(config):
         colors = resolve_color(actor.get("color", "cobalt"))
         name = actor.get("name", "")
         actor_html_parts.append(
-            f'    <div class="actor" style="background: linear-gradient(135deg, {colors[0]}, {colors[1]});">'
+            f'    <div class="actor" style="background: transparent; border: 1px solid {colors[0]}33;">'
             f'<div class="name">{name}</div></div>'
         )
     actors_html = "\n".join(actor_html_parts)
@@ -578,7 +621,7 @@ def generate_sequence(config):
             )
             label_style = ""
             if style == "dashed":
-                label_style = ' style="color: #008B8B;"'
+                label_style = ' style="color: rgba(0, 139, 139, 0.60);"'
             step_htmls.append(f"""      <div class="step">
         <div class="msg {style}" style="left: {int(left_pos)}px; width: {int(msg_width)}px;">
           <div class="line"></div>{arrow_html}
@@ -591,7 +634,7 @@ def generate_sequence(config):
             label = step.get("label", "")
             pos = centers[actor_idx] - 27
             step_htmls.append(f"""      <div class="step" style="min-height: 24px;">
-        <div style="position: absolute; left: {int(pos)}px; top: 0; font-size: 10px; color: {CHARCOAL}; font-style: italic; background: {CANVAS_BG}; padding: 2px 6px; border-radius: 4px; border: 1px solid #c4b8aa;">
+        <div style="position: absolute; left: {int(pos)}px; top: 0; font-size: 10px; color: {CHARCOAL}; font-style: italic; background: {CANVAS_BG}; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.12);">
           {label}
         </div>
       </div>""")
@@ -620,11 +663,14 @@ def generate_sequence(config):
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
   body {{
     width: {width}px;
+    {f'height: {height}px;' if height else ''}
     padding: 40px {padding}px 48px;
     background: {CANVAS_BG};
+    {GRID_BG_CSS}
     font-family: {FONT_STACK};
+    {('display: flex; align-items: center; justify-content: center;') if height else ''}
   }}
-  .diagram {{ position: relative; }}
+  .diagram {{ position: relative; width: 100%; }}
   .actors {{
     display: flex;
     justify-content: space-between;
@@ -637,7 +683,6 @@ def generate_sequence(config):
     padding: 12px 6px;
     border-radius: 10px;
     text-align: center;
-    box-shadow: 0 3px 12px rgba(0,0,0,0.10);
   }}
   .actor .name {{ font-size: 12px; font-weight: 700; color: #fff; line-height: 1.2; }}
   .lifelines {{
@@ -663,7 +708,7 @@ def generate_sequence(config):
     content: '';
     width: 2px;
     height: 100%;
-    background: repeating-linear-gradient(to bottom, #c4b8aa 0px, #c4b8aa 6px, transparent 6px, transparent 12px);
+    background: repeating-linear-gradient(to bottom, rgba(255,255,255,0.12) 0px, rgba(255,255,255,0.12) 6px, transparent 6px, transparent 12px);
   }}
   .steps {{
     position: relative;
@@ -720,8 +765,8 @@ def generate_sequence(config):
     margin: 12px auto;
     padding: 10px 20px;
     border-radius: 8px;
-    background: #D7EEFF;
-    border: 1.5px solid #0077B5;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.12);
     text-align: center;
     font-size: 12px;
     color: {CHARCOAL};
@@ -737,7 +782,7 @@ def generate_sequence(config):
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: #008B8B;
+    color: rgba(0, 139, 139, 0.60);
     margin: 16px 0 4px 55px;
     position: relative;
     z-index: 1;
@@ -795,6 +840,7 @@ def generate_grid(config):
     connections = config.get("connections", [])
     columns = config.get("columns", 2)
     width = config.get("width", 800)
+    height = config.get("height", None)
 
     # Card HTML
     card_htmls = []
@@ -804,7 +850,7 @@ def generate_grid(config):
         name = card.get("name", "")
         items = card.get("items", [])
 
-        icon_html = f'<div class="icon">{icon}</div>' if icon else ""
+        icon_html = f'<div class="icon">{render_icon(icon, size=15)}</div>' if icon else ""
 
         items_html = ""
         for item in items:
@@ -818,7 +864,7 @@ def generate_grid(config):
     </div>
 """
 
-        card_htmls.append(f"""  <div class="service" style="background: linear-gradient(135deg, {colors[0]}, {colors[1]});">
+        card_htmls.append(f"""  <div class="service" style="background: transparent; border: 1px solid {colors[0]}33;">
     <div class="service-header">
       {icon_html}
       {name}
@@ -862,10 +908,14 @@ def generate_grid(config):
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
   body {{
     width: {width}px;
+    {f'height: {height}px;' if height else ''}
     padding: 40px 32px;
     background: {CANVAS_BG};
+    {GRID_BG_CSS}
     font-family: {FONT_STACK};
+    {('display: flex; align-items: center; justify-content: center;') if height else ''}
   }}
+  .grid-wrapper {{ width: 100%; }}
   .grid {{
     display: grid;
     grid-template-columns: repeat({columns}, 1fr);
@@ -874,7 +924,6 @@ def generate_grid(config):
   .service {{
     border-radius: 14px;
     padding: 20px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.10), 0 1px 4px rgba(0,0,0,0.06);
   }}
   .service-header {{
     font-size: 15px;
@@ -889,7 +938,8 @@ def generate_grid(config):
     width: 28px;
     height: 28px;
     border-radius: 6px;
-    background: rgba(255,255,255,0.2);
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.12);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -976,17 +1026,109 @@ def generate_grid(config):
 # Screenshot
 # ---------------------------------------------------------------------------
 
-def screenshot_html(html, output_path, width):
-    """Render HTML and take a full-page screenshot with Playwright."""
+def screenshot_html(html, output_path, width, height=None):
+    """Render HTML and take a screenshot with Playwright.
+
+    When height is specified, uses a fixed viewport and clips to exact
+    dimensions (no full_page). Otherwise falls back to full_page=True.
+    """
+    vp_height = height if height else 800
     with sync_playwright() as p:
         browser = p.chromium.launch()
-        page = browser.new_page(viewport={"width": width, "height": 800})
+        page = browser.new_page(viewport={"width": width, "height": vp_height})
         page.set_content(html)
         page.wait_for_function("document.fonts.ready.then(() => true)")
         page.wait_for_timeout(200)
-        page.screenshot(path=output_path, full_page=True)
+        if height:
+            page.screenshot(
+                path=output_path,
+                clip={"x": 0, "y": 0, "width": width, "height": height},
+            )
+        else:
+            page.screenshot(path=output_path, full_page=True)
         browser.close()
     print(f"Diagram generated: {output_path}")
+
+
+def screenshot_html_gif(html, output_path, width, height, duration=5500, fps=10):
+    """Render animated HTML and capture as GIF via frame screenshots + ffmpeg.
+
+    Requires ffmpeg to be installed. Also saves a static PNG of the final frame
+    at the same path with _static.png suffix.
+
+    Args:
+        html: HTML content string
+        output_path: Output GIF path (e.g., diagram.gif)
+        width: Viewport width
+        height: Viewport height (required for GIF)
+        duration: Total animation duration in ms (default 5500)
+        fps: Frames per second (default 10)
+    """
+    import subprocess
+    import tempfile
+    import os
+
+    if not height:
+        height = 627  # default to LinkedIn landscape
+
+    frame_interval = 1000 // fps
+    total_frames = duration // frame_interval
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page(viewport={"width": width, "height": height})
+            page.set_content(html)
+            page.wait_for_function("document.fonts.ready.then(() => true)")
+            page.wait_for_timeout(500)
+
+            print(f"Capturing {total_frames} frames at {fps}fps...")
+            for i in range(total_frames):
+                frame_path = os.path.join(tmpdir, f"frame_{i:04d}.png")
+                page.screenshot(
+                    path=frame_path,
+                    clip={"x": 0, "y": 0, "width": width, "height": height},
+                )
+                page.wait_for_timeout(frame_interval)
+
+            # Save static final frame
+            static_path = output_path.rsplit(".", 1)[0] + "_static.png"
+            page.wait_for_timeout(300)
+            page.screenshot(
+                path=static_path,
+                clip={"x": 0, "y": 0, "width": width, "height": height},
+            )
+            print(f"Static frame: {static_path}")
+            browser.close()
+
+        # Create GIF with ffmpeg
+        frame_pattern = os.path.join(tmpdir, "frame_%04d.png")
+        ffmpeg_cmd = [
+            "ffmpeg", "-y",
+            "-framerate", str(fps),
+            "-i", frame_pattern,
+            "-vf", f"fps={fps},scale={width}:-1:flags=lanczos,"
+                   f"split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer",
+            output_path,
+        ]
+
+        try:
+            subprocess.run(ffmpeg_cmd, capture_output=True, check=True, timeout=60)
+        except FileNotFoundError:
+            print("Error: ffmpeg not found. Install it: brew install ffmpeg", file=sys.stderr)
+            sys.exit(1)
+        except subprocess.CalledProcessError:
+            # Fallback to simpler ffmpeg command
+            ffmpeg_cmd_simple = [
+                "ffmpeg", "-y",
+                "-framerate", str(fps),
+                "-i", frame_pattern,
+                "-vf", f"fps={fps},scale={width}:-1",
+                output_path,
+            ]
+            subprocess.run(ffmpeg_cmd_simple, capture_output=True, check=True, timeout=60)
+
+    print(f"GIF generated: {output_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -1018,8 +1160,11 @@ Examples:
     )
     parser.add_argument("--config", help="Path to JSON config file")
     parser.add_argument("--stdin", action="store_true", help="Read JSON from stdin")
-    parser.add_argument("--output", "-o", required=True, help="Output PNG path")
+    parser.add_argument("--output", "-o", required=True, help="Output PNG or GIF path")
     parser.add_argument("--save-html", help="Also save the generated HTML to this path")
+    parser.add_argument("--gif", action="store_true", help="Capture as animated GIF (requires ffmpeg). Also saves a static PNG.")
+    parser.add_argument("--gif-duration", type=int, default=5500, help="GIF animation duration in ms (default 5500)")
+    parser.add_argument("--gif-fps", type=int, default=10, help="GIF frames per second (default 10)")
 
     args = parser.parse_args()
 
@@ -1045,7 +1190,20 @@ Examples:
         print(f"HTML saved: {args.save_html}")
 
     width = config.get("width", 900)
-    screenshot_html(html, args.output, width)
+    height = config.get("height", None)
+
+    # Use GIF mode if --gif flag or config has "animated": true
+    use_gif = args.gif or config.get("animated", False)
+    duration = config.get("gif_duration", args.gif_duration)
+    fps = config.get("gif_fps", args.gif_fps)
+
+    if use_gif:
+        output = args.output
+        if not output.endswith(".gif"):
+            output = output.rsplit(".", 1)[0] + ".gif"
+        screenshot_html_gif(html, output, width, height, duration=duration, fps=fps)
+    else:
+        screenshot_html(html, args.output, width, height)
 
 
 if __name__ == "__main__":

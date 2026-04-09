@@ -1,11 +1,11 @@
 ---
 name: beautiful-diagrams
-description: "Generate beautiful article diagrams (pipeline, sequence, grid) using HTML + Playwright. Canvas background, gradient service cards, clean professional style. Use when creating architecture diagrams, sequence diagrams, token/secret maps, or any visual diagram for articles. Triggers: 'create diagram', 'generate diagram', 'make architecture diagram', 'build sequence diagram', 'create a visual', 'diagram for article'."
+description: "Generate beautiful article diagrams (pipeline, sequence, grid) using HTML + Playwright. Dark minimal design, wireframe service cards, structural grid, near-monochrome palette. Use when creating architecture diagrams, sequence diagrams, token/secret maps, or any visual diagram for articles. Triggers: 'create diagram', 'generate diagram', 'make architecture diagram', 'build sequence diagram', 'create a visual', 'diagram for article'."
 ---
 
 # Beautiful Diagrams
 
-Generate professional article diagrams using HTML + Playwright screenshots. Clean design: Canvas (#F5F1EC) background, gradient service cards, Inter font, box shadows, emoji icons.
+Generate professional article diagrams using HTML + Playwright screenshots. Dark minimal design: flat dark background (#0F0F0F), structural grid, wireframe service cards with accent-color borders, Inter bold typography, near-monochrome palette.
 
 ## Requirements
 
@@ -22,6 +22,30 @@ python scripts/diagram-generator.py --config diagram.json -o diagram.png
 
 ## Diagram Types
 
+### Icons (IBM Carbon Design System)
+
+The `icon` field in JSON configs supports **IBM Carbon icon names** (preferred) or emoji fallback. Use Carbon icon names for a professional, monoline look.
+
+**Available Carbon icons:**
+
+| Name | Description | Name | Description |
+|------|-------------|------|-------------|
+| `document` | Generic document | `document-tasks` | Document with checkmark |
+| `compass` | Navigation/architecture | `machine-learning` | ML/AI model |
+| `activity` | Activity/heartbeat | `branch` | Git branch/merge |
+| `renew` | Refresh/loop | `flash` | Lightning/fast |
+| `cognitive` | Brain/AI | `rule` | Shield/rules |
+| `code` | Code brackets | `settings` | Gear/config |
+| `deploy` | Deploy/house | `cloud` | Cloud service |
+| `api` | API endpoint | `terminal` | Terminal/CLI |
+| `data` | Database/storage | `user` | User/person |
+| `rocket` | Launch/deploy | `search` | Search/find |
+| `warning` | Alert/warning | `checkmark` | Success/done |
+| `close` | Close/error | `send` | Send/message |
+| `notification` | Bell/alert | `network` | Network/nodes |
+
+**Usage:** Set `"icon": "branch"` instead of `"icon": "🔀"`. Emoji still works as fallback.
+
 ### 1. Pipeline (Architecture / Flow)
 
 Horizontal flow of service cards connected by arrows. Great for system architecture, CI/CD pipelines, data flows.
@@ -30,6 +54,7 @@ Horizontal flow of service cards connected by arrows. Great for system architect
 {
   "type": "pipeline",
   "width": 900,
+  "height": 627,
   "nodes": [
     {
       "name": "Developer",
@@ -192,6 +217,8 @@ Use these preset names in the `color` field:
 
 You can also use raw hex colors: `"#FF5733"` or gradient pairs: `["#FF5733", "#C70039"]`
 
+**Note:** Color presets now control the card's border accent color (at 20% opacity), not gradient fill.
+
 ## CLI Options
 
 ```bash
@@ -202,8 +229,47 @@ python scripts/diagram-generator.py [options]
 |--------|-------------|
 | `--config FILE` | Path to JSON config file |
 | `--stdin` | Read JSON config from stdin |
-| `--output, -o FILE` | Output PNG path (required) |
+| `--output, -o FILE` | Output PNG or GIF path (required) |
 | `--save-html FILE` | Also save the generated HTML |
+| `--gif` | Capture as animated GIF (requires ffmpeg). Also saves a `_static.png` |
+| `--gif-duration MS` | Animation duration in ms (default 5500) |
+| `--gif-fps N` | Frames per second (default 10) |
+
+## Animated GIF Output
+
+For diagrams with CSS animations (flowing particles, pulse effects, fade-ins), use `--gif` to capture as an animated GIF. Also saves a static PNG of the final frame automatically.
+
+**Requirements:** `ffmpeg` (`brew install ffmpeg`)
+
+**CLI usage:**
+```bash
+python scripts/diagram-generator.py --config diagram.json --gif -o diagram.gif
+python scripts/diagram-generator.py --config diagram.json --gif --gif-duration 6000 --gif-fps 12 -o diagram.gif
+```
+
+**JSON config:**
+```json
+{
+  "type": "pipeline",
+  "animated": true,
+  "gif_duration": 5500,
+  "gif_fps": 10,
+  "width": 1200,
+  "height": 627,
+  "nodes": [...]
+}
+```
+
+Setting `"animated": true` in the config has the same effect as `--gif`. The generator captures frames at the specified FPS for the duration, then assembles them into a GIF with ffmpeg.
+
+**Output files:**
+- `diagram.gif` - Animated GIF
+- `diagram_static.png` - Static final frame (useful for Substack covers which don't support GIF)
+
+**Tips:**
+- Add CSS `@keyframes` animations to your HTML for flowing particles, pulse rings, fade-ins
+- 10fps at 5.5 seconds (55 frames) keeps GIF size under 200KB
+- Use `height` in config (required for GIF mode)
 
 ## Workflow
 
@@ -229,8 +295,20 @@ echo '{"type":"pipeline","nodes":[{"name":"A","icon":"📦","color":"github"},{"
   python scripts/diagram-generator.py --stdin -o quick-diagram.png
 ```
 
+## Fixed-Size Diagrams (IMPORTANT)
+
+**Always set `height` in the JSON config for article images.** Without it, the generator uses `full_page: true` which captures the content height and often results in diagrams with dead space or content crammed at the top.
+
+For LinkedIn article images, always use:
+- `"width": 1200, "height": 627` (landscape 16:9)
+- `"width": 1080, "height": 1080` (square)
+- `"width": 1080, "height": 1350` (carousel 4:5)
+
+When `height` is set, the body gets flexbox centering and the screenshot clips to the exact dimensions. Content fills the canvas properly with no dead space.
+
 ## Tips
 
+- **Always set `height`** in configs for article images to avoid dead space
 - Keep node/actor names short (1-2 words) for best readability
 - Use `components` in pipeline nodes to show sub-services within a larger service
 - Use `phase` steps in sequence diagrams to label sections
