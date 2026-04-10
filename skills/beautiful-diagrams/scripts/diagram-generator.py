@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """
 Generate beautiful article diagrams using HTML + Playwright screenshots.
-Dark minimal design: flat dark background, structural grid, wireframe cards,
-bold Inter typography, near-monochrome palette.
+
+Bold white carousel style:
+- White background, no grid
+- Thick black borders (3-4px) on cards
+- Terracotta accent fills (#E27D5B) on icon tiles and highlight chips
+- Inter 900 typography, LARGE font sizes
+- Chunky rounded corners (14-18px)
+- Designed to be readable in-feed on LinkedIn / Substack
 
 Supports three diagram types:
-  - pipeline: Horizontal flow of service cards with connectors
-  - sequence: Vertical sequence diagram with actors, lifelines, messages
-  - grid: Card grid layout with items and connections
+  - pipeline: Horizontal flow of bold cards with connectors
+  - sequence: Sequence diagram with actors, lifelines, messages
+  - grid:     Card grid layout with items
 
 Usage:
     python diagram-generator.py --config diagram.json -o diagram.png
@@ -21,115 +27,171 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 # ---------------------------------------------------------------------------
-# Shared constants
+# Shared design tokens — bold white carousel style
 # ---------------------------------------------------------------------------
 
-FONT_STACK = "'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif"
-MONO_STACK = "'SF Mono', 'Fira Code', 'Consolas', monospace"
-CANVAS_BG = "#0F0F0F"
-CHARCOAL = "rgba(255,255,255,0.50)"
+FONT_STACK = "'Inter', 'Archivo', 'Segoe UI', system-ui, -apple-system, sans-serif"
+MONO_STACK = "'JetBrains Mono', 'SF Mono', 'Fira Code', 'Consolas', monospace"
 
-GRID_BG_CSS = """
-    background-image:
-        linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
-    background-size: 60px 60px;
-"""
+# Core palette
+BG_WHITE = "#FFFFFF"
+INK = "#0A0A0A"            # Primary text and borders
+INK_SOFT = "#2A2A2A"       # Secondary text
+INK_MUTED = "#5A5A5A"      # Tertiary / hint text
+ACCENT = "#E27D5B"         # Terracotta default accent
+ACCENT_SOFT = "#F3D4C6"    # Light terracotta backdrop
+HAIRLINE = "#E5E5E5"       # Thin dividers between items
 
-# Icon names that map to @carbon/icons package on unpkg CDN (Apache 2.0).
-# Use icon name as the "icon" field value in JSON configs instead of emoji.
-# Falls back to rendering as emoji if the name doesn't look like a Carbon icon.
-CARBON_ICON_NAMES = {
-    "document", "document-tasks", "compass", "machine-learning", "activity",
-    "branch", "renew", "flash", "cognitive", "rule", "code", "settings",
-    "deploy", "cloud", "api", "terminal", "data", "user", "rocket", "search",
-    "warning", "checkmark", "close", "send", "notification", "network",
+# Google Fonts link for bolder Inter + Archivo Black fallback
+GOOGLE_FONTS = (
+    '<link rel="preconnect" href="https://fonts.googleapis.com">'
+    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+    '<link href="https://fonts.googleapis.com/css2?'
+    'family=Inter:wght@400;500;700;800;900&'
+    'family=Archivo:wght@700;800;900&'
+    'family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">'
+)
+
+# IBM Carbon Design System icons (32px viewBox, inline SVG paths)
+CARBON_ICONS = {
+    "document": '<path d="M25.7,9.3l-7-7A.908.908,0,0,0,18,2H8A2.0058,2.0058,0,0,0,6,4V28a2.0058,2.0058,0,0,0,2,2H24a2.0058,2.0058,0,0,0,2-2V10A.908.908,0,0,0,25.7,9.3ZM18,4.4,23.6,10H18ZM24,28H8V4h8v6a2.0058,2.0058,0,0,0,2,2h6Z"/>',
+    "document-tasks": '<path d="M22 27.18 19.41 24.59 18 26 22 30 30 22 28.59 20.59 22 27.18z"/><path d="M15,28H8V4h8v6a2.0058,2.0058,0,0,0,2,2h6v6h2V10a.9092.9092,0,0,0-.3-.7l-7-7A.9087.9087,0,0,0,18,2H8A2.0058,2.0058,0,0,0,6,4V28a2.0058,2.0058,0,0,0,2,2h7ZM18,4.4,23.6,10H18Z"/>',
+    "compass": '<path d="M16,4A12,12,0,1,1,4,16,12,12,0,0,1,16,4m0-2A14,14,0,1,0,30,16,14,14,0,0,0,16,2Z"/><path d="M23,10.41,21.59,9l-4.3,4.3a3,3,0,0,0-4,4L9,21.59,10.41,23l4.3-4.3a3,3,0,0,0,4-4ZM17,16a1,1,0,1,1-1-1A1,1,0,0,1,17,16Z"/><circle cx="16" cy="7.5" r="1.5"/>',
+    "machine-learning": '<path d="M27,19c1.6543,0,3-1.3457,3-3s-1.3457-3-3-3c-1.302,0-2.4016.8384-2.8157,2h-5.7703l7.3008-7.3008c.3911.1875.8235.3008,1.2852.3008,1.6543,0,3-1.3457,3-3s-1.3457-3-3-3-3,1.3457-3,3c0,.4619.1135.894.3005,1.2852l-8.3005,8.3008v-6.5859c0-1.1025.897-2,2-2h2v-2h-2c-1.2002,0-2.2661.5425-3,1.3823-.7339-.8398-1.7998-1.3823-3-1.3823h-1c-4.9624,0-9,4.0371-9,9v6c0,4.9629,4.0376,9,9,9h1c1.2002,0,2.2661-.5425,3-1.3823.7339.8398,1.7998,1.3823,3,1.3823h2v-2h-2c-1.103,0-2-.8975-2-2v-6.5859l8.3005,8.3008c-.187.3911-.3005.8232-.3005,1.2852,0,1.6543,1.3457,3,3,3s3-1.3457,3-3-1.3457-3-3-3c-.4617,0-.894.1133-1.2852.3008l-7.3008-7.3008h5.7703c.4141,1.1616,1.5137,2,2.8157,2Z"/>',
+    "activity": '<path d="M12,29a1,1,0,0,1-.92-.62L6.33,17H2V15H7a1,1,0,0,1,.92.62L12,25.28,20.06,3.65A1,1,0,0,1,21,3a1,1,0,0,1,.93.68L25.72,15H30v2H25a1,1,0,0,1-.95-.68L21,7,12.94,28.35A1,1,0,0,1,12,29Z"/>',
+    "branch": '<path d="m20,6c0,1.8587,1.2795,3.4109,3,3.858v4.142c0,1.6543-1.3457,3-3,3h-8c-1.1299,0-2.1617.391-3,1.0256v-8.1676c1.7203-.4471,3-1.9993,3-3.858,0-2.2061-1.7944-4-4-4s-4,1.7939-4,4c0,1.8587,1.2797,3.4108,3,3.858v12.142s0,.142,0,.142c-1.7203.4473-3,1.9997-3,3.858,0,2.2056,1.7944,4,4,4s4-1.7944,4-4c0-1.8583-1.2797-3.4107-3-3.858v-.142c0-1.6543,1.3457-3,3-3h8c2.7568,0,5-2.2432,5-5v-4.142c1.7205-.4471,3-1.9993,3-3.858,0-2.2061-1.7939-4-4-4s-4,1.7939-4,4Zm-14,0c0-1.1025.897-2,2-2s2,.8975,2,2c0,1.1025-.897,2-2,2s-2-.8975-2-2Zm4,20c0,1.103-.897,2-2,2s-2-.897-2-2,.897-2,2-2,2,.897,2,2ZM26,6c0,1.1025-.8975,2-2,2s-2-.8975-2-2c0-1.1025.8975-2,2-2s2,.8975,2,2Z"/>',
+    "renew": '<path d="M12,10H6.78A11,11,0,0,1,27,16h2A13,13,0,0,0,6,7.68V4H4v8h8Z"/><path d="M20,22h5.22A11,11,0,0,1,5,16H3a13,13,0,0,0,23,8.32V28h2V20H20Z"/>',
+    "flash": '<path d="M11.61,29.92a1,1,0,0,1-.6-1.07L12.83,17H8a1,1,0,0,1-1-1.23l3-13A1,1,0,0,1,11,2H21a1,1,0,0,1,.78.37,1,1,0,0,1,.2.85L20.25,11H25a1,1,0,0,1,.9.56,1,1,0,0,1-.11,1l-13,17A1,1,0,0,1,12,30,1.09,1.09,0,0,1,11.61,29.92ZM17.75,13l2-9H11.8L9.26,15h5.91L13.58,25.28,23,13Z"/>',
+    "cognitive": '<path d="M30,13A11,11,0,0,0,19,2H11a9,9,0,0,0-9,9v3a5,5,0,0,0,5,5H8.1A5,5,0,0,0,13,23h1.38l4,7,1.73-1-4-6.89A2,2,0,0,0,14.38,21H13a3,3,0,0,1,0-6h1V13H13a5,5,0,0,0-4.9,4H7a3,3,0,0,1-3-3V12H6A3,3,0,0,0,9,9V8H7V9a1,1,0,0,1-1,1H4.08A7,7,0,0,1,11,4h6V6a1,1,0,0,1-1,1H14V9h2a3,3,0,0,0,3-3V4a9,9,0,0,1,8.05,5H26a3,3,0,0,0-3,3v1h2V12a1,1,0,0,1,1-1h1.77A8.76,8.76,0,0,1,28,13v1a5,5,0,0,1-5,5H20v2h3a7,7,0,0,0,3-.68V21a3,3,0,0,1-3,3H22v2h1a5,5,0,0,0,5-5V18.89A7,7,0,0,0,30,14Z"/>',
+    "rule": '<path d="M10 16H22V18H10z"/><path d="M10 10H22V12H10z"/><path d="M16,30,9.8242,26.7071A10.9815,10.9815,0,0,1,4,17V4A2.0022,2.0022,0,0,1,6,2H26a2.0022,2.0022,0,0,1,2,2V17a10.9815,10.9815,0,0,1-5.8242,9.7069ZM6,4V17a8.9852,8.9852,0,0,0,4.7656,7.9423L16,27.7333l5.2344-2.791A8.9852,8.9852,0,0,0,26,17V4Z"/>',
+    "code": '<path d="M31 16 24 23 22.59 21.59 28.17 16 22.59 10.41 24 9 31 16z"/><path d="M1 16 8 9 9.41 10.41 3.83 16 9.41 21.59 8 23 1 16z"/><path d="M5.91 15H26.080000000000002V17H5.91z" transform="rotate(-75 15.996 16)"/>',
+    "settings": '<path d="M27,16.76c0-.25,0-.5,0-.76s0-.51,0-.77l1.92-1.68A2,2,0,0,0,29.3,11L26.94,7a2,2,0,0,0-1.73-1,2,2,0,0,0-.64.1l-2.43.82a11.35,11.35,0,0,0-1.31-.75l-.51-2.52a2,2,0,0,0-2-1.61H13.64a2,2,0,0,0-2,1.61l-.51,2.52a11.48,11.48,0,0,0-1.32.75L7.43,6.06A2,2,0,0,0,6.79,6,2,2,0,0,0,5.06,7L2.7,11a2,2,0,0,0,.41,2.51L5,15.24c0,.25,0,.5,0,.76s0,.51,0,.77L3.11,18.45A2,2,0,0,0,2.7,21L5.06,25a2,2,0,0,0,1.73,1,2,2,0,0,0,.64-.1l2.43-.82a11.35,11.35,0,0,0,1.31.75l.51,2.52a2,2,0,0,0,2,1.61h4.72a2,2,0,0,0,2-1.61l.51-2.52a11.48,11.48,0,0,0,1.32-.75l2.42.82a2,2,0,0,0,.64.1,2,2,0,0,0,1.73-1L29.3,21a2,2,0,0,0-.41-2.51ZM25.21,24l-3.43-1.16a8.86,8.86,0,0,1-2.71,1.57L18.36,28H13.64l-.71-3.55a9.36,9.36,0,0,1-2.7-1.57L6.79,24,4.43,20l2.72-2.4a8.9,8.9,0,0,1,0-3.13L4.43,12,6.79,8l3.43,1.16a8.86,8.86,0,0,1,2.71-1.57L13.64,4h4.72l.71,3.55a9.36,9.36,0,0,1,2.7,1.57L25.21,8,27.57,12l-2.72,2.4a8.9,8.9,0,0,1,0,3.13L27.57,20Z"/><path d="M16,22a6,6,0,1,1,6-6A5.94,5.94,0,0,1,16,22Zm0-10a3.91,3.91,0,0,0-4,4,3.91,3.91,0,0,0,4,4,3.91,3.91,0,0,0,4-4A3.91,3.91,0,0,0,16,12Z"/>',
+    "deploy": '<path d="M16 2L2 14l2 2 4-3.5V28h16V12.5L28 16l2-2L16 2zM22 26H10V10.8l6-5.25 6 5.25z"/><path d="M14 18H18V24H14z"/>',
+    "cloud": '<path d="M16,7a7.66,7.66,0,0,1,1.51.15,8,8,0,0,1,6.35,6.34l.26,1.35,1.35.24a5.5,5.5,0,0,1-1,10.92H7.5a5.5,5.5,0,0,1-1-10.92l1.34-.24.26-1.35A8,8,0,0,1,16,7m0-2A10,10,0,0,0,8.36,11.77a7.49,7.49,0,0,0,1.14,14.9h15a7.49,7.49,0,0,0,1.14-14.9A10,10,0,0,0,16,5Z"/>',
+    "api": '<path d="M8,14v4H4V14ZM2,12V20h8V12Z"/><path d="M18,12H14a2,2,0,0,0-2,2v6h2V18h4v2h2V14A2,2,0,0,0,18,12Zm0,4H14V14h4Z"/><path d="M28 12L24 12 24 20 26 20 26 18 28 18 28 20 30 20 30 12 28 12 28 16 26 16 26 14 28 14 28 12z"/>',
+    "terminal": '<path d="M26,4.01H6c-1.1,0-2,.9-2,2v20c0,1.1.9,2,2,2h20c1.1,0,2-.9,2-2V6.01c0-1.1-.9-2-2-2Zm0,22H6V10.01h20v16Zm0-18H6v-2h20v2Z"/><path d="M10.76,23.01l1.41-1.41,3.59-3.59-3.59-3.59-1.41-1.41-1.41,1.41,1.41,1.41,2.17,2.17-2.17,2.17-1.41,1.41,1.41,1.41Z"/><path d="M18 20.01H24V22.01H18z"/>',
+    "data": '<path d="M16,4c5.11,0,10,1.34,10,4s-4.89,4-10,4S6,10.66,6,8,10.89,4,16,4m0-2C9.37,2,4,3.79,4,8s5.37,6,12,6,12-1.79,12-6S22.63,2,16,2Z"/><path d="M4,24c0,3.31,5.37,6,12,6s12-2.69,12-6V20.37c-2.34,2.54-7.09,3.63-12,3.63s-9.66-1.09-12-3.63Z"/><path d="M4,18c0,3.31,5.37,6,12,6s12-2.69,12-6V14.37c-2.34,2.54-7.09,3.63-12,3.63S6.34,16.91,4,14.37Z"/><path d="M4,12c0,3.31,5.37,6,12,6s12-2.69,12-6V8.37C25.66,10.91,20.91,12,16,12S6.34,10.91,4,8.37Z"/>',
+    "user": '<path d="M16,4a5,5,0,1,1-5,5,5,5,0,0,1,5-5m0-2a7,7,0,1,0,7,7A7,7,0,0,0,16,2Z"/><path d="M26,30H24V25a5,5,0,0,0-5-5H13a5,5,0,0,0-5,5v5H6V25a7,7,0,0,1,7-7h6a7,7,0,0,1,7,7Z"/>',
+    "rocket": '<path d="M24.13,6A21.39,21.39,0,0,0,15,9.77L12.35,14H6.44L2,20l6.78-.41L9,22.35a2,2,0,0,0,.28.65l.33.48-3.06,5L12.25,30l3-5.22.42.28A2,2,0,0,0,16.34,25l2.75.17L20,31.94l6-4.44V21.65L28.23,19A21.39,21.39,0,0,0,32,9.87ZM16.58,23l-.11,0L11,19.53l0-.11L9.16,15.84A19.27,19.27,0,0,1,23.58,8.42,19.27,19.27,0,0,1,16.58,23Z"/><circle cx="20" cy="14" r="2"/>',
+    "search": '<path d="M30,28.59,22.45,21A11,11,0,1,0,21,22.45L28.59,30ZM5,14a9,9,0,1,1,9,9A9.01,9.01,0,0,1,5,14Z"/>',
+    "warning": '<path d="M16,2A14,14,0,1,0,30,16,14,14,0,0,0,16,2Zm0,26A12,12,0,1,1,28,16,12,12,0,0,1,16,28Z"/><path d="M15 8H17V19H15z"/><path d="M16,22a1.5,1.5,0,1,0,1.5,1.5A1.5,1.5,0,0,0,16,22Z"/>',
+    "checkmark": '<path d="M13 24L4 15.09 5.41 13.68 13 21.18 26.59 7.59 28 9z"/>',
+    "close": '<path d="M24 9.4L22.6 8 16 14.6 9.4 8 8 9.4 14.6 16 8 22.6 9.4 24 16 17.4 22.6 24 24 22.6 17.4 16 24 9.4z"/>',
+    "send": '<path d="M27.45,15.11l-22-11a1,1,0,0,0-1.08.12,1,1,0,0,0-.33,1L7,16,4,26.74A1,1,0,0,0,5,28a1,1,0,0,0,.45-.11l22-11a1,1,0,0,0,0-1.78ZM6.72,25.14,9,17H18V15H9L6.72,6.86,24.55,16Z"/>',
+    "notification": '<path d="M28.7,20.3,26,17.6V13A10.07,10.07,0,0,0,17,3.05V1H15V3.05A10.07,10.07,0,0,0,6,13v4.6L3.3,20.3A1,1,0,0,0,3,21v3a1,1,0,0,0,1,1h7a5,5,0,0,0,10,0h7a1,1,0,0,0,1-1V21A1,1,0,0,0,28.7,20.3ZM16,27a3,3,0,0,1-3-3h6A3,3,0,0,1,16,27Zm11-4H5V21.41l2.7-2.71A1,1,0,0,0,8,18V13A8,8,0,0,1,24,13v5a1,1,0,0,0,.3.7L27,21.41Z"/>',
+    "network": '<path d="M26,14a2,2,0,0,0,2-2V6a2,2,0,0,0-2-2H20a2,2,0,0,0-2,2v6a2,2,0,0,0,2,2h2v4H10V14h2a2,2,0,0,0,2-2V6a2,2,0,0,0-2-2H6A2,2,0,0,0,4,6v6a2,2,0,0,0,2,2H8v4H4v2H8v4H6a2,2,0,0,0-2,2v6a2,2,0,0,0,2,2h6a2,2,0,0,0,2-2V24a2,2,0,0,0-2-2H10V18H22v4H20a2,2,0,0,0-2,2v6a2,2,0,0,0,2,2h6a2,2,0,0,0,2-2V24a2,2,0,0,0-2-2H24V18h4V16H24V14ZM6,6h6v6H6ZM12,30H6V24h6Zm14,0H20V24h6ZM20,6h6v6H20Z"/>',
 }
-CARBON_CDN = "https://unpkg.com/@carbon/icons/svg/32"
 
 
-def render_icon(icon_value, size=13):
-    """Render an icon as either a Carbon CDN reference or emoji.
+def render_icon(icon_value, size=28, color=None):
+    """Render an icon as either a Carbon SVG or emoji.
 
-    If icon_value matches a known Carbon icon name, renders an <img> tag
-    pointing to the @carbon/icons package on unpkg (Apache 2.0 licensed).
-    Otherwise, renders the value as-is (emoji).
+    Default size is now 28px (up from 13) to match the bold carousel style.
     """
     if not icon_value:
         return ""
-    # Check Carbon icons (case-insensitive, allow underscores for hyphens)
     lookup = icon_value.lower().replace("_", "-").strip()
-    if lookup in CARBON_ICON_NAMES:
-        url = f"{CARBON_CDN}/{lookup}.svg"
+    fill = color or INK
+    if lookup in CARBON_ICONS:
         return (
-            f'<img src="{url}" width="{size}" height="{size}" '
-            f'style="flex-shrink:0; filter:brightness(0) invert(1);" />'
+            f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" '
+            f'width="{size}" height="{size}" fill="{fill}" '
+            f'style="flex-shrink:0;">{CARBON_ICONS[lookup]}</svg>'
         )
-    # Fallback: render as emoji text
-    return icon_value
+    return f'<span style="font-size:{size}px;line-height:1;">{icon_value}</span>'
 
 
+# Service color presets — used as accent fills on cards and icon tiles.
+# Each preset maps to a single hex; the old gradient pair is still supported
+# for backward compatibility (only the first value is used as the fill).
 SERVICE_COLORS = {
-    "slack": ["#4A154B", "#3a1040"],
-    "cloudflare": ["#F48120", "#d06a10"],
-    "github": ["#2d333b", "#1a1e22"],
-    "jira": ["#0052CC", "#003d99"],
-    "linkedin": ["#0077B5", "#005a8c"],
-    "claude": ["#D97706", "#b56305"],
-    "aws": ["#FF9900", "#cc7a00"],
-    "gcp": ["#4285F4", "#2a6acf"],
-    "azure": ["#0078D4", "#005a9e"],
-    "vercel": ["#000000", "#1a1a1a"],
-    "docker": ["#2496ED", "#1a7ac4"],
-    "redis": ["#DC382D", "#b02d24"],
-    "postgres": ["#336791", "#264d6e"],
-    "mongodb": ["#47A248", "#378a38"],
-    "stripe": ["#635BFF", "#4a44cc"],
-    "teal": ["#008B8B", "#006d6d"],
-    "cobalt": ["#1E4CA1", "#163a7a"],
-    "bronze": ["#CD7F32", "#a86628"],
+    "slack": "#6B3A6B",
+    "cloudflare": "#F48120",
+    "github": "#2D333B",
+    "jira": "#1E6FDB",
+    "linkedin": "#1878B6",
+    "claude": "#D97706",
+    "aws": "#FF9900",
+    "gcp": "#4285F4",
+    "azure": "#1A82D4",
+    "vercel": "#0A0A0A",
+    "docker": "#2496ED",
+    "redis": "#DC382D",
+    "postgres": "#4269A0",
+    "mongodb": "#47A248",
+    "stripe": "#6359FF",
+    "teal": "#2A8A8A",
+    "cobalt": "#2E5BB8",
+    "bronze": "#C47434",
+    # Aliases matching the carousel palette
+    "terracotta": ACCENT,
+    "accent": ACCENT,
 }
 
 
 def resolve_color(color_input):
-    """Resolve a color to [start, end] gradient pair.
+    """Resolve a color input to a single hex fill.
 
     Accepts:
-      - A preset name: "slack", "github", etc.
-      - A single hex: "#FF0000" -> ["#FF0000", darker shade]
-      - A list of two hex codes: ["#FF0000", "#CC0000"]
+      - Preset name: "teal", "claude"
+      - Single hex: "#E27D5B"
+      - Legacy two-item list: ["#E27D5B", "#c46a4a"] (first value used)
+    Returns a single hex string.
     """
-    if isinstance(color_input, list) and len(color_input) == 2:
-        return color_input
+    if color_input is None:
+        return ACCENT
+    if isinstance(color_input, list) and color_input:
+        return color_input[0]
     if isinstance(color_input, str):
-        lower = color_input.lower().strip("#")
-        # Check presets
-        if lower in SERVICE_COLORS:
-            return SERVICE_COLORS[lower]
-        # Single hex -> darken for gradient end
-        hex_color = color_input if color_input.startswith("#") else f"#{color_input}"
-        return [hex_color, _darken(hex_color, 0.2)]
-    return ["#36454F", "#2a363f"]
+        key = color_input.lower().strip().lstrip("#")
+        if key in SERVICE_COLORS:
+            return SERVICE_COLORS[key]
+        if color_input.startswith("#"):
+            return color_input
+        return f"#{color_input}" if len(key) in (3, 6) else ACCENT
+    return ACCENT
 
 
-def _darken(hex_color, factor=0.2):
-    """Darken a hex color by a factor."""
+def hex_to_rgb(hex_color):
     h = hex_color.lstrip("#")
-    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-    r = max(0, int(r * (1 - factor)))
-    g = max(0, int(g * (1 - factor)))
-    b = max(0, int(b * (1 - factor)))
-    return f"#{r:02x}{g:02x}{b:02x}"
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
 
-def _lighten(hex_color, factor=0.3):
-    """Lighten a hex color by a factor."""
-    h = hex_color.lstrip("#")
-    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-    r = min(255, int(r + (255 - r) * factor))
-    g = min(255, int(g + (255 - g) * factor))
-    b = min(255, int(b + (255 - b) * factor))
-    return f"#{r:02x}{g:02x}{b:02x}"
+def rgba(hex_color, alpha):
+    r, g, b = hex_to_rgb(hex_color)
+    return f"rgba({r},{g},{b},{alpha})"
+
+
+def contrast_ink(hex_color):
+    """Return INK or white depending on which contrasts better with the fill."""
+    r, g, b = hex_to_rgb(hex_color)
+    # Relative luminance (sRGB)
+    lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
+    return INK if lum > 0.55 else "#FFFFFF"
+
+
+# ---------------------------------------------------------------------------
+# Shared base CSS
+# ---------------------------------------------------------------------------
+
+def base_css(width, height):
+    h_rule = f"height: {height}px;" if height else ""
+    center = "display: flex; align-items: center; justify-content: center;" if height else ""
+    return f"""
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  html, body {{ -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }}
+  body {{
+    width: {width}px;
+    {h_rule}
+    padding: 56px 48px;
+    background: {BG_WHITE};
+    font-family: {FONT_STACK};
+    color: {INK};
+    {center}
+  }}
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -139,116 +201,95 @@ def _lighten(hex_color, factor=0.3):
 def generate_pipeline(config):
     """Generate a horizontal pipeline/architecture diagram.
 
-    Config shape:
-    {
-        "type": "pipeline",
-        "width": 900,           (optional, default 900)
-        "nodes": [
-            {
-                "name": "Service Name",
-                "desc": "Short description",       (optional)
-                "icon": "emoji",                    (optional)
-                "color": "preset" | "#hex" | ["#start","#end"],
-                "trigger": true,                    (optional, renders as top trigger box)
-                "width": 130,                       (optional)
-                "components": [                     (optional, sub-items inside the card)
-                    {"name": "Sub Name", "desc": "Sub desc", "icon": "emoji", "tag": "LABEL"}
-                ]
-            }
-        ],
-        "connectors": [
-            {
-                "label": "text on arrow",           (optional)
-                "bidirectional": false,              (optional)
-                "forward_label": "text",            (for bidirectional)
-                "reverse_label": "text"             (for bidirectional)
-            }
-        ]
-    }
+    Config shape unchanged from previous version — see SKILL.md.
     """
     nodes = config.get("nodes", [])
     connectors = config.get("connectors", [])
-    width = config.get("width", 900)
+    width = config.get("width", 1200)
     height = config.get("height", None)
+    animated = config.get("animated", False)
 
-    # Build node HTML
     node_htmls = []
     for i, node in enumerate(nodes):
-        colors = resolve_color(node.get("color", "github"))
-        node_w = node.get("width", 130)
+        fill = resolve_color(node.get("color", "terracotta"))
+        ink_on_fill = contrast_ink(fill)
+        node_w = node.get("width", 180)
         icon = node.get("icon", "")
         name = node.get("name", "")
         desc = node.get("desc", "")
         components = node.get("components", [])
         trigger = node.get("trigger", False)
 
-        icon_html = f'<div class="icon">{render_icon(icon)}</div>' if icon else ""
+        icon_tile = (
+            f'<div class="icon-tile" style="background:{fill};">'
+            f'{render_icon(icon, size=32, color=ink_on_fill)}'
+            f'</div>'
+        ) if icon else ""
+
         desc_html = f'<div class="desc">{desc}</div>' if desc else ""
 
-        # Trigger node: top trigger box + vertical arrow + optional child card below
         if trigger:
-            trigger_desc = desc
-            trigger_desc_html = f'<div class="cmd">{trigger_desc}</div>' if trigger_desc else ""
+            trigger_desc_html = f'<div class="cmd">{desc}</div>' if desc else ""
             node_html = f"""
-  <div class="slack-col">
-    <div class="trigger" style="background: transparent; border: 1px solid {colors[0]}33;">
-      {f'<div class="icon">{render_icon(icon)}</div>' if icon else ""}
-      <div>
-        <div class="text">{name}</div>
+  <div class="tcol">
+    <div class="trigger">
+      {icon_tile}
+      <div class="trig-text">
+        <div class="name">{name}</div>
         {trigger_desc_html}
       </div>
     </div>
-    <div class="v-arrow"></div>
-    <div style="height: 5px;"></div>"""
-            # Render child card below the trigger if specified
+    <div class="v-arrow"></div>"""
             child = node.get("child")
             if child:
-                ch_colors = resolve_color(child.get("color", "github"))
+                ch_fill = resolve_color(child.get("color", "terracotta"))
+                ch_ink = contrast_ink(ch_fill)
                 ch_icon = child.get("icon", "")
                 ch_name = child.get("name", "")
                 ch_desc = child.get("desc", "")
-                ch_w = child.get("width", 130)
-                ch_icon_html = f'<div class="icon">{render_icon(ch_icon)}</div>' if ch_icon else ""
+                ch_icon_tile = (
+                    f'<div class="icon-tile" style="background:{ch_fill};">'
+                    f'{render_icon(ch_icon, size=32, color=ch_ink)}'
+                    f'</div>'
+                ) if ch_icon else ""
                 ch_desc_html = f'<div class="desc">{ch_desc}</div>' if ch_desc else ""
                 node_html += f"""
-    <div class="service" style="background: transparent; border: 1px solid {ch_colors[0]}33; width: {ch_w}px;">
-      <div class="service-header">
-        {ch_icon_html}
-        <div>
-          <div class="name">{ch_name}</div>
-          {ch_desc_html}
-        </div>
-      </div>
+    <div class="card">
+      {ch_icon_tile}
+      <div class="name">{ch_name}</div>
+      {ch_desc_html}
     </div>"""
             node_html += "\n  </div>"
             node_htmls.append(node_html)
             continue
 
-        # Components card (expanded, like GitHub in the example)
         if components:
-            comp_html = '<div class="components">'
+            comp_items = []
             for comp in components:
-                comp_icon = comp.get("icon", "")
-                comp_name = comp.get("name", "")
-                comp_desc = comp.get("desc", "")
-                comp_tag = comp.get("tag", "")
-                tag_html = f'<div class="cat-tag">{comp_tag}</div>' if comp_tag else ""
-                comp_html += f"""
-      <div class="comp">
-        <div class="comp-icon">{render_icon(comp_icon, size=12)}</div>
-        <div>
-          <div class="comp-name">{comp_name}</div>
-          <div class="comp-desc">{comp_desc}</div>
+                cname = comp.get("name", "")
+                cdesc = comp.get("desc", "")
+                cicon = comp.get("icon", "")
+                ctag = comp.get("tag", "")
+                tag_html = f'<div class="tag">{ctag}</div>' if ctag else ""
+                icon_mini = (
+                    f'<div class="mini-tile" style="background:{fill};">'
+                    f'{render_icon(cicon, size=18, color=ink_on_fill)}'
+                    f'</div>'
+                ) if cicon else ""
+                comp_items.append(f"""      <div class="comp">
+        {icon_mini}
+        <div class="comp-text">
+          <div class="comp-name">{cname}</div>
+          <div class="comp-desc">{cdesc}</div>
         </div>
         {tag_html}
-      </div>"""
-            comp_html += "\n    </div>"
-
+      </div>""")
+            comp_html = '<div class="components">\n' + "\n".join(comp_items) + '\n    </div>'
             node_html = f"""
-  <div class="service" style="background: transparent; border: 1px solid {colors[0]}33; flex: 1;">
-    <div class="service-header">
-      {icon_html}
-      <div>
+  <div class="card card-wide">
+    <div class="card-head">
+      {icon_tile}
+      <div class="card-head-text">
         <div class="name">{name}</div>
         {desc_html}
       </div>
@@ -257,46 +298,43 @@ def generate_pipeline(config):
   </div>"""
         else:
             node_html = f"""
-  <div class="service service-mid" style="background: transparent; border: 1px solid {colors[0]}33; width: {node_w}px;">
-    <div class="service-header">
-      {icon_html}
-      <div>
-        <div class="name">{name}</div>
-        {desc_html}
-      </div>
-    </div>
+  <div class="card" style="width:{node_w}px;">
+    {icon_tile}
+    <div class="name">{name}</div>
+    {desc_html}
   </div>"""
 
         node_htmls.append(node_html)
 
-    # Build connectors HTML (placed between nodes)
+    # Connectors
     connector_htmls = []
-    for conn in connectors:
+    for idx, conn in enumerate(connectors):
         bidi = conn.get("bidirectional", False)
         if bidi:
             fwd = conn.get("forward_label", "")
             rev = conn.get("reverse_label", "")
             connector_htmls.append(f"""
   <div class="bidi">
-    <div class="arrow-fwd">
-      <div class="label fwd-label">{fwd}</div>
-      <div class="line"></div>
+    <div class="bi-row">
+      <div class="bi-label">{fwd}</div>
+      <div class="bi-line fwd"></div>
     </div>
-    <div class="arrow-rev">
-      <div class="line"></div>
-      <div class="label rev-label">{rev}</div>
+    <div class="bi-row">
+      <div class="bi-line rev"></div>
+      <div class="bi-label">{rev}</div>
     </div>
   </div>""")
         else:
             label = conn.get("label", "")
-            label_html = f'<div class="label">{label}</div>' if label else ""
+            label_html = f'<div class="conn-label">{label}</div>' if label else ""
+            # Animated particles for the flowing dot effect
+            particle = '<div class="particle"></div>' if animated else ''
             connector_htmls.append(f"""
   <div class="connector">
     {label_html}
-    <div class="line"></div>
+    <div class="line">{particle}</div>
   </div>""")
 
-    # Interleave nodes and connectors
     body_parts = []
     for i, node_html in enumerate(node_htmls):
         body_parts.append(node_html)
@@ -305,163 +343,193 @@ def generate_pipeline(config):
 
     body_content = "\n".join(body_parts)
 
+    # Animation keyframes (only injected when animated=true)
+    anim_css = """
+  @keyframes particle-flow {
+    0%   { left: 0%;   opacity: 0; }
+    10%  { opacity: 1; }
+    90%  { opacity: 1; }
+    100% { left: 100%; opacity: 0; }
+  }
+  @keyframes card-pulse {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-4px); }
+  }
+  .particle {
+    position: absolute;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: """ + ACCENT + """;
+    border: 3px solid """ + INK + """;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    animation: particle-flow 3s linear infinite;
+  }
+  .card { animation: card-pulse 4s ease-in-out infinite; }
+  .card:nth-child(1) { animation-delay: 0s; }
+  .card:nth-child(3) { animation-delay: 0.4s; }
+  .card:nth-child(5) { animation-delay: 0.8s; }
+  .card:nth-child(7) { animation-delay: 1.2s; }
+  .card:nth-child(9) { animation-delay: 1.6s; }
+""" if animated else ""
+
     html = f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
+{GOOGLE_FONTS}
 <style>
-  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-  body {{
-    width: {width}px;
-    {f'height: {height}px;' if height else ''}
-    padding: 20px 24px 20px;
-    background: {CANVAS_BG};
-    {GRID_BG_CSS}
-    font-family: {FONT_STACK};
-    {('display: flex; align-items: center; justify-content: center;') if height else ''}
-  }}
+{base_css(width, height)}
   .pipeline {{
     display: flex;
-    align-items: flex-end;
+    align-items: center;
+    justify-content: center;
     width: 100%;
+    gap: 0;
   }}
-  .slack-col {{
+  .card {{
+    background: {BG_WHITE};
+    border: 4px solid {INK};
+    border-radius: 18px;
+    padding: 22px 20px 20px;
     display: flex;
     flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    flex-shrink: 0;
+    box-shadow: 6px 6px 0 {INK};
+  }}
+  .card-wide {{ flex: 1; max-width: 340px; padding: 24px; }}
+  .card-head {{
+    display: flex;
     align-items: center;
+    gap: 14px;
+    width: 100%;
+  }}
+  .card-head-text {{ display: flex; flex-direction: column; gap: 4px; }}
+  .icon-tile {{
+    width: 58px; height: 58px;
+    border-radius: 13px;
+    border: 2.5px solid {INK};
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }}
+  .mini-tile {{
+    width: 36px; height: 36px;
+    border-radius: 9px;
+    border: 2px solid {INK};
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }}
+  .name {{
+    font-family: {FONT_STACK};
+    font-size: 26px;
+    font-weight: 900;
+    color: {INK};
+    letter-spacing: -0.02em;
+    line-height: 1.05;
+  }}
+  .desc {{
+    font-size: 15px;
+    font-weight: 500;
+    color: {INK_SOFT};
+    line-height: 1.35;
+    margin-top: 2px;
+  }}
+  .components {{
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+    margin-top: 6px;
+  }}
+  .comp {{
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    background: {BG_WHITE};
+    border: 3px solid {INK};
+    border-radius: 12px;
+  }}
+  .comp-text {{ flex: 1; display: flex; flex-direction: column; gap: 2px; }}
+  .comp-name {{ font-size: 17px; font-weight: 800; color: {INK}; letter-spacing: -0.01em; }}
+  .comp-desc {{ font-size: 14px; font-weight: 600; color: {INK_SOFT}; line-height: 1.4; }}
+  .tag {{
+    font-size: 13px;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 5px 11px;
+    background: {ACCENT};
+    color: {INK};
+    border: 2px solid {INK};
+    border-radius: 7px;
+  }}
+  .tcol {{
+    display: flex; flex-direction: column; align-items: center; gap: 14px;
     flex-shrink: 0;
   }}
   .trigger {{
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 18px;
-    border-radius: 10px;
+    display: flex; align-items: center; gap: 14px;
+    padding: 18px 22px;
+    background: {BG_WHITE};
+    border: 4px solid {INK};
+    border-radius: 18px;
+    box-shadow: 6px 6px 0 {INK};
   }}
-  .trigger .icon {{ font-size: 18px; }}
-  .trigger .text {{
-    font-size: 13px;
-    font-weight: 700;
-    color: #fff;
-  }}
+  .trig-text {{ display: flex; flex-direction: column; gap: 2px; }}
   .trigger .cmd {{
-    font-size: 11px;
-    color: rgba(255,255,255,0.75);
     font-family: {MONO_STACK};
+    font-size: 14px;
+    font-weight: 600;
+    color: {INK_MUTED};
   }}
   .v-arrow {{
-    width: 2px;
-    height: 18px;
-    background: {CHARCOAL};
+    width: 4px; height: 32px;
+    background: {INK};
     position: relative;
   }}
   .v-arrow::after {{
     content: '';
     position: absolute;
-    bottom: -5px;
+    bottom: -12px;
     left: 50%;
     transform: translateX(-50%);
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 6px solid {CHARCOAL};
-  }}
-  .service {{
-    border-radius: 12px;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    flex-shrink: 0;
-  }}
-  .service-header {{
-    padding: 12px 14px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }}
-  .service-header .icon {{
-    width: 26px;
-    height: 26px;
-    border-radius: 6px;
-    background: transparent;
-    border: 1px solid rgba(255,255,255,0.12);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 13px;
-    flex-shrink: 0;
-  }}
-  .service-header .name {{
-    font-size: 13px;
-    font-weight: 700;
-    color: #fff;
-  }}
-  .service-header .desc {{
-    font-size: 10px;
-    color: rgba(255,255,255,0.7);
-    margin-top: 1px;
-  }}
-  .components {{
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 0 10px 10px;
-  }}
-  .comp {{
-    background: rgba(255,255,255,0.08);
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 7px;
-    padding: 7px 10px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }}
-  .comp .comp-icon {{
-    font-size: 12px;
-    flex-shrink: 0;
-  }}
-  .comp .comp-name {{
-    font-size: 11px;
-    font-weight: 600;
-    color: #fff;
-  }}
-  .comp .comp-desc {{
-    font-size: 9px;
-    color: rgba(255,255,255,0.55);
-  }}
-  .cat-tag {{
-    font-size: 8px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: rgba(255,255,255,0.45);
-    padding: 2px 6px;
-    background: rgba(255,255,255,0.06);
-    border-radius: 3px;
-    margin-left: auto;
+    border-left: 10px solid transparent;
+    border-right: 10px solid transparent;
+    border-top: 14px solid {INK};
   }}
   .connector {{
     display: flex;
     flex-direction: column;
     justify-content: center;
     align-items: center;
-    min-width: 68px;
-    padding: 0 4px;
-    flex-shrink: 0;
-    margin-bottom: 18px;
+    min-width: 140px;
+    flex: 0 1 auto;
+    padding: 0 8px;
   }}
-  .connector .label {{
-    font-size: 9px;
-    color: {CHARCOAL};
-    font-weight: 500;
+  .conn-label {{
+    font-size: 18px;
+    font-weight: 900;
+    color: {INK};
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 12px;
     white-space: nowrap;
-    margin-bottom: 3px;
-    background: {CANVAS_BG};
-    padding: 0 3px;
+    background: {ACCENT};
+    padding: 8px 16px;
+    border: 2.5px solid {INK};
+    border-radius: 10px;
   }}
   .connector .line {{
     width: 100%;
-    height: 2px;
-    background: {CHARCOAL};
+    height: 4px;
+    background: {INK};
     position: relative;
   }}
   .connector .line::after {{
@@ -470,64 +538,35 @@ def generate_pipeline(config):
     right: -1px;
     top: 50%;
     transform: translateY(-50%);
-    border-top: 4px solid transparent;
-    border-bottom: 4px solid transparent;
-    border-left: 6px solid {CHARCOAL};
+    border-top: 9px solid transparent;
+    border-bottom: 9px solid transparent;
+    border-left: 13px solid {INK};
   }}
   .bidi {{
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    min-width: 80px;
-    padding: 0 4px;
-    flex-shrink: 0;
-    gap: 6px;
-    margin-bottom: 10px;
+    display: flex; flex-direction: column; justify-content: center;
+    align-items: center; min-width: 110px; padding: 0 6px; gap: 14px;
   }}
-  .bidi .arrow-fwd, .bidi .arrow-rev {{
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    width: 100%;
+  .bi-row {{ display: flex; align-items: center; gap: 8px; width: 100%; }}
+  .bi-label {{
+    font-size: 12px; font-weight: 800; color: {INK};
+    text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap;
   }}
-  .bidi .label {{
-    font-size: 9px;
-    color: {CHARCOAL};
-    font-weight: 500;
-    white-space: nowrap;
+  .bi-line {{
+    flex: 1; height: 4px; background: {INK}; position: relative;
   }}
-  .bidi .fwd-label {{ margin-bottom: 2px; }}
-  .bidi .rev-label {{ margin-top: 2px; }}
-  .bidi .line {{
-    width: 100%;
-    height: 2px;
-    background: {CHARCOAL};
-    position: relative;
-  }}
-  .bidi .arrow-fwd .line::after {{
-    content: '';
-    position: absolute;
-    right: -1px;
-    top: 50%;
+  .bi-line.fwd::after {{
+    content: ''; position: absolute; right: -1px; top: 50%;
     transform: translateY(-50%);
-    border-top: 4px solid transparent;
-    border-bottom: 4px solid transparent;
-    border-left: 6px solid {CHARCOAL};
+    border-top: 8px solid transparent; border-bottom: 8px solid transparent;
+    border-left: 12px solid {INK};
   }}
-  .bidi .arrow-rev .line::after {{
-    content: '';
-    position: absolute;
-    left: -1px;
-    top: 50%;
+  .bi-line.rev::after {{
+    content: ''; position: absolute; left: -1px; top: 50%;
     transform: translateY(-50%);
-    border-top: 4px solid transparent;
-    border-bottom: 4px solid transparent;
-    border-right: 6px solid {CHARCOAL};
+    border-top: 8px solid transparent; border-bottom: 8px solid transparent;
+    border-right: 12px solid {INK};
   }}
-  .service-mid {{
-    margin-bottom: 6px;
-  }}
+{anim_css}
 </style>
 </head>
 <body>
@@ -544,63 +583,40 @@ def generate_pipeline(config):
 # ---------------------------------------------------------------------------
 
 def generate_sequence(config):
-    """Generate a sequence diagram with actors, lifelines, and messages.
-
-    Config shape:
-    {
-        "type": "sequence",
-        "width": 890,           (optional, default 890)
-        "actors": [
-            {"name": "Developer", "color": "preset" | "#hex" | ["#start","#end"]}
-        ],
-        "steps": [
-            {"type": "message", "from": 0, "to": 1, "label": "text", "style": "solid"|"dashed"},
-            {"type": "self", "actor": 2, "label": "Verify signature"},
-            {"type": "note", "over": 3, "text": "Note text<br>Line 2"},
-            {"type": "phase", "label": "PHASE NAME"},
-            {"type": "spacer"}
-        ]
-    }
-    """
+    """Generate a sequence diagram with actors, lifelines, and messages."""
     actors = config.get("actors", [])
     steps = config.get("steps", [])
-    width = config.get("width", 890)
+    width = config.get("width", 1200)
     height = config.get("height", None)
     n_actors = len(actors)
 
-    # Calculate actor positions (evenly spaced)
-    padding = 32
+    padding = 48
     usable = width - 2 * padding
-    actor_w = 110
+    actor_w = 160
     if n_actors > 1:
         spacing = usable / (n_actors - 1)
     else:
         spacing = 0
     centers = [padding + i * spacing for i in range(n_actors)]
 
-    # Actor HTML
     actor_html_parts = []
     for i, actor in enumerate(actors):
-        colors = resolve_color(actor.get("color", "cobalt"))
+        fill = resolve_color(actor.get("color", "terracotta"))
+        ink_on = contrast_ink(fill)
         name = actor.get("name", "")
         actor_html_parts.append(
-            f'    <div class="actor" style="background: transparent; border: 1px solid {colors[0]}33;">'
+            f'    <div class="actor" style="background:{fill};color:{ink_on};">'
             f'<div class="name">{name}</div></div>'
         )
     actors_html = "\n".join(actor_html_parts)
 
-    # Lifeline lines
-    lifeline_divs = '<div class="line"></div>' * n_actors
-    lifeline_bg = f"""    <div class="lifeline-bg">
-      {lifeline_divs}
-    </div>"""
+    lifeline_divs = '<div class="ll"></div>' * n_actors
+    lifeline_bg = f'    <div class="lifeline-bg">\n      {lifeline_divs}\n    </div>'
 
-    # Position classes
     pos_css = ""
     for i, c in enumerate(centers):
         pos_css += f"  .from-{i} {{ left: {int(c)}px; }}\n"
 
-    # Steps HTML
     step_htmls = []
     for step in steps:
         stype = step.get("type", "message")
@@ -616,39 +632,31 @@ def generate_sequence(config):
             msg_width = centers[right_idx] - centers[left_idx]
             going_left = to < frm
             arrow_class = "left" if going_left else ""
-            arrow_html = (
-                f'<div class="arrow-head {arrow_class}"></div>'
-            )
-            label_style = ""
-            if style == "dashed":
-                label_style = ' style="color: rgba(0, 139, 139, 0.60);"'
             step_htmls.append(f"""      <div class="step">
         <div class="msg {style}" style="left: {int(left_pos)}px; width: {int(msg_width)}px;">
-          <div class="line"></div>{arrow_html}
-          <div class="msg-label"{label_style}>{label}</div>
+          <div class="msg-line"></div>
+          <div class="arrow-head {arrow_class}"></div>
+          <div class="msg-label">{label}</div>
         </div>
       </div>""")
 
         elif stype == "self":
             actor_idx = step["actor"]
             label = step.get("label", "")
-            pos = centers[actor_idx] - 27
-            step_htmls.append(f"""      <div class="step" style="min-height: 24px;">
-        <div style="position: absolute; left: {int(pos)}px; top: 0; font-size: 10px; color: {CHARCOAL}; font-style: italic; background: {CANVAS_BG}; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.12);">
-          {label}
-        </div>
+            pos = centers[actor_idx] - 60
+            step_htmls.append(f"""      <div class="step" style="min-height: 40px;">
+        <div class="self-note" style="left: {int(pos)}px;">{label}</div>
       </div>""")
 
         elif stype == "note":
             over_idx = step["over"]
             text = step.get("text", "")
-            margin_left = int(centers[over_idx]) - 60
-            step_htmls.append(f"""      <div class="spacer"></div>
-      <div class="note-box" style="margin-left: {margin_left}px;">{text}</div>""")
+            margin_left = int(centers[over_idx]) - 120
+            step_htmls.append(f'      <div class="spacer"></div>\n      <div class="note-box" style="margin-left: {margin_left}px;">{text}</div>')
 
         elif stype == "phase":
             label = step.get("label", "")
-            step_htmls.append(f"""      <div class="phase-label">{label}</div>""")
+            step_htmls.append(f'      <div class="phase-label">{label}</div>')
 
         elif stype == "spacer":
             step_htmls.append('      <div class="spacer"></div>')
@@ -659,39 +667,36 @@ def generate_sequence(config):
 <html>
 <head>
 <meta charset="utf-8">
+{GOOGLE_FONTS}
 <style>
-  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-  body {{
-    width: {width}px;
-    {f'height: {height}px;' if height else ''}
-    padding: 40px {padding}px 48px;
-    background: {CANVAS_BG};
-    {GRID_BG_CSS}
-    font-family: {FONT_STACK};
-    {('display: flex; align-items: center; justify-content: center;') if height else ''}
-  }}
+{base_css(width, height)}
+  body {{ padding: 56px {padding}px; }}
   .diagram {{ position: relative; width: 100%; }}
   .actors {{
     display: flex;
     justify-content: space-between;
-    margin-bottom: 0;
     position: relative;
     z-index: 2;
+    margin-bottom: 20px;
   }}
   .actor {{
     width: {actor_w}px;
-    padding: 12px 6px;
-    border-radius: 10px;
+    padding: 16px 10px;
+    border-radius: 14px;
+    border: 4px solid {INK};
     text-align: center;
+    box-shadow: 5px 5px 0 {INK};
   }}
-  .actor .name {{ font-size: 12px; font-weight: 700; color: #fff; line-height: 1.2; }}
-  .lifelines {{
-    position: relative;
-    margin-top: 0;
+  .actor .name {{
+    font-size: 20px;
+    font-weight: 900;
+    letter-spacing: -0.01em;
+    line-height: 1.1;
   }}
+  .lifelines {{ position: relative; margin-top: 0; }}
   .lifeline-bg {{
     position: absolute;
-    top: 0;
+    top: 0; left: 0;
     width: 100%;
     height: 100%;
     display: flex;
@@ -699,91 +704,123 @@ def generate_sequence(config):
     z-index: 0;
     pointer-events: none;
   }}
-  .lifeline-bg .line {{
+  .lifeline-bg .ll {{
     width: {actor_w}px;
     display: flex;
     justify-content: center;
   }}
-  .lifeline-bg .line::after {{
+  .lifeline-bg .ll::after {{
     content: '';
-    width: 2px;
+    width: 4px;
     height: 100%;
-    background: repeating-linear-gradient(to bottom, rgba(255,255,255,0.12) 0px, rgba(255,255,255,0.12) 6px, transparent 6px, transparent 12px);
+    background: repeating-linear-gradient(
+      to bottom,
+      {INK} 0px,
+      {INK} 8px,
+      transparent 8px,
+      transparent 16px
+    );
   }}
   .steps {{
     position: relative;
     z-index: 1;
-    padding: 16px 0;
+    padding: 24px 0;
   }}
   .step {{
     display: flex;
     align-items: center;
-    margin: 10px 0;
-    min-height: 32px;
+    margin: 18px 0;
+    min-height: 48px;
     position: relative;
   }}
   .msg {{
     position: absolute;
-    height: 2px;
+    height: 4px;
     z-index: 1;
   }}
-  .msg .line {{
-    height: 2px;
+  .msg-line {{
+    height: 4px;
     width: 100%;
+    background: {INK};
   }}
-  .msg.solid .line {{ background: {CHARCOAL}; }}
-  .msg.dashed .line {{ background: repeating-linear-gradient(to right, {CHARCOAL} 0px, {CHARCOAL} 6px, transparent 6px, transparent 12px); }}
-  .msg .arrow-head {{
+  .msg.dashed .msg-line {{
+    background: repeating-linear-gradient(
+      to right,
+      {INK} 0px,
+      {INK} 10px,
+      transparent 10px,
+      transparent 20px
+    );
+  }}
+  .arrow-head {{
     position: absolute;
-    right: -1px;
-    top: 50%;
+    right: -1px; top: 50%;
     transform: translateY(-50%);
     width: 0; height: 0;
-    border-top: 5px solid transparent;
-    border-bottom: 5px solid transparent;
-    border-left: 8px solid {CHARCOAL};
+    border-top: 9px solid transparent;
+    border-bottom: 9px solid transparent;
+    border-left: 14px solid {INK};
   }}
-  .msg .arrow-head.left {{
-    left: -1px;
-    right: auto;
+  .arrow-head.left {{
+    left: -1px; right: auto;
     border-left: none;
-    border-right: 8px solid {CHARCOAL};
+    border-right: 14px solid {INK};
   }}
   .msg-label {{
-    font-size: 11px;
-    color: {CHARCOAL};
+    font-size: 15px;
+    font-weight: 800;
+    color: {INK};
     white-space: nowrap;
     position: absolute;
-    top: -16px;
-    left: 50%;
+    top: -28px; left: 50%;
     transform: translateX(-50%);
-    font-weight: 500;
-    background: {CANVAS_BG};
-    padding: 0 4px;
+    background: {ACCENT};
+    padding: 4px 10px;
+    border: 3px solid {INK};
+    border-radius: 6px;
+    letter-spacing: 0.02em;
+  }}
+  .self-note {{
+    position: absolute;
+    top: 0;
+    padding: 8px 14px;
+    font-size: 14px;
+    font-weight: 700;
+    color: {INK};
+    background: {BG_WHITE};
+    border: 3px solid {INK};
+    border-radius: 8px;
   }}
   .note-box {{
-    margin: 12px auto;
-    padding: 10px 20px;
-    border-radius: 8px;
-    background: transparent;
-    border: 1px solid rgba(255,255,255,0.12);
+    margin: 24px auto;
+    padding: 16px 24px;
+    border-radius: 12px;
+    background: {ACCENT_SOFT};
+    border: 4px solid {INK};
     text-align: center;
-    font-size: 12px;
-    color: {CHARCOAL};
-    font-weight: 500;
+    font-size: 16px;
+    font-weight: 700;
+    color: {INK};
     width: fit-content;
+    max-width: 80%;
     position: relative;
     z-index: 1;
-    line-height: 1.5;
+    line-height: 1.45;
+    box-shadow: 4px 4px 0 {INK};
   }}
-  .spacer {{ height: 8px; }}
+  .spacer {{ height: 14px; }}
   .phase-label {{
-    font-size: 10px;
-    font-weight: 700;
+    display: inline-block;
+    font-size: 15px;
+    font-weight: 900;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: rgba(0, 139, 139, 0.60);
-    margin: 16px 0 4px 55px;
+    letter-spacing: 0.1em;
+    color: {INK};
+    background: {ACCENT};
+    padding: 8px 16px;
+    border: 3px solid {INK};
+    border-radius: 8px;
+    margin: 28px 0 16px;
     position: relative;
     z-index: 1;
   }}
@@ -813,65 +850,47 @@ def generate_sequence(config):
 # ---------------------------------------------------------------------------
 
 def generate_grid(config):
-    """Generate a grid layout of service cards with items and connections.
-
-    Config shape:
-    {
-        "type": "grid",
-        "width": 800,           (optional, default 800)
-        "columns": 2,           (optional, default 2)
-        "cards": [
-            {
-                "name": "Service Name",
-                "icon": "emoji",
-                "color": "preset" | "#hex" | ["#start","#end"],
-                "items": [
-                    {"name": "TOKEN_NAME", "hint": "Where to find it", "badge": "optional"}
-                ]
-            }
-        ],
-        "connections": [            (optional, renders as arrow row between card rows)
-            {"from": "Label A", "to": "Label B"},
-            {"from": "Label C", "to": "Label D", "dashed": true}
-        ]
-    }
-    """
+    """Generate a grid layout of bold cards with items."""
     cards = config.get("cards", [])
     connections = config.get("connections", [])
     columns = config.get("columns", 2)
-    width = config.get("width", 800)
+    width = config.get("width", 1200)
     height = config.get("height", None)
 
-    # Card HTML
     card_htmls = []
     for card in cards:
-        colors = resolve_color(card.get("color", "github"))
+        fill = resolve_color(card.get("color", "terracotta"))
+        ink_on = contrast_ink(fill)
         icon = card.get("icon", "")
         name = card.get("name", "")
         items = card.get("items", [])
 
-        icon_html = f'<div class="icon">{render_icon(icon, size=15)}</div>' if icon else ""
+        icon_tile = (
+            f'<div class="icon-tile" style="background:{fill};">'
+            f'{render_icon(icon, size=34, color=ink_on)}'
+            f'</div>'
+        ) if icon else ""
 
         items_html = ""
         for item in items:
+            iname = item.get("name", "")
             badge = item.get("badge", "")
             badge_html = f' <span class="badge">{badge}</span>' if badge else ""
             hint = item.get("hint", "")
             hint_html = f'<div class="hint">{hint}</div>' if hint else ""
-            items_html += f"""    <div class="token">
-      {item.get("name", "")}{badge_html}
+            items_html += f"""    <div class="item">
+      <div class="item-name">{iname}{badge_html}</div>
       {hint_html}
     </div>
 """
 
-        card_htmls.append(f"""  <div class="service" style="background: transparent; border: 1px solid {colors[0]}33;">
-    <div class="service-header">
-      {icon_html}
-      {name}
+        card_htmls.append(f"""  <div class="card">
+    <div class="card-head">
+      {icon_tile}
+      <div class="card-title">{name}</div>
     </div>
-{items_html}  </div>""")
+    {items_html}  </div>""")
 
-    # Connection arrows row
     conn_html = ""
     if connections:
         arrow_items = []
@@ -886,15 +905,10 @@ def generate_grid(config):
 {chr(10).join(arrow_items)}
   </div>"""
 
-    # Split cards into rows and insert connections between row 0 and row 1
-    rows = []
-    for i in range(0, len(card_htmls), columns):
-        rows.append(card_htmls[i:i + columns])
-
+    rows = [card_htmls[i:i + columns] for i in range(0, len(card_htmls), columns)]
     body_parts = []
     for i, row in enumerate(rows):
         body_parts.extend(row)
-        # Insert connections after first row
         if i == 0 and conn_html:
             body_parts.append(conn_html)
 
@@ -904,112 +918,117 @@ def generate_grid(config):
 <html>
 <head>
 <meta charset="utf-8">
+{GOOGLE_FONTS}
 <style>
-  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-  body {{
-    width: {width}px;
-    {f'height: {height}px;' if height else ''}
-    padding: 40px 32px;
-    background: {CANVAS_BG};
-    {GRID_BG_CSS}
-    font-family: {FONT_STACK};
-    {('display: flex; align-items: center; justify-content: center;') if height else ''}
-  }}
-  .grid-wrapper {{ width: 100%; }}
+{base_css(width, height)}
   .grid {{
     display: grid;
     grid-template-columns: repeat({columns}, 1fr);
-    gap: 24px;
+    gap: 32px;
+    width: 100%;
   }}
-  .service {{
-    border-radius: 14px;
-    padding: 20px;
+  .card {{
+    background: {BG_WHITE};
+    border: 4px solid {INK};
+    border-radius: 20px;
+    padding: 26px 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    box-shadow: 7px 7px 0 {INK};
   }}
-  .service-header {{
-    font-size: 15px;
-    font-weight: 700;
-    color: #fff;
-    margin-bottom: 14px;
+  .card-head {{
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 16px;
+    margin-bottom: 6px;
   }}
-  .service-header .icon {{
-    width: 28px;
-    height: 28px;
-    border-radius: 6px;
-    background: transparent;
-    border: 1px solid rgba(255,255,255,0.12);
+  .icon-tile {{
+    width: 62px; height: 62px;
+    border-radius: 13px;
+    border: 2.5px solid {INK};
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 15px;
+    flex-shrink: 0;
   }}
-  .token {{
-    background: rgba(255,255,255,0.15);
-    border: 1px solid rgba(255,255,255,0.2);
-    border-radius: 8px;
-    padding: 10px 14px;
-    margin-bottom: 8px;
-    font-size: 13px;
-    font-weight: 600;
-    color: #fff;
-    font-family: {MONO_STACK};
+  .card-title {{
+    font-size: 28px;
+    font-weight: 900;
+    color: {INK};
     letter-spacing: -0.02em;
+    line-height: 1.1;
   }}
-  .token .hint {{
+  .item {{
+    padding: 14px 16px;
+    background: {BG_WHITE};
+    border: 3px solid {INK};
+    border-radius: 12px;
+  }}
+  .item-name {{
     font-family: {FONT_STACK};
-    font-size: 11px;
-    font-weight: 400;
-    color: rgba(255,255,255,0.7);
-    margin-top: 3px;
-    letter-spacing: 0;
+    font-size: 18px;
+    font-weight: 800;
+    color: {INK};
+    letter-spacing: -0.01em;
+    line-height: 1.2;
   }}
-  .token:last-child {{ margin-bottom: 0; }}
+  .hint {{
+    font-family: {FONT_STACK};
+    font-size: 16px;
+    font-weight: 600;
+    color: {INK_SOFT};
+    margin-top: 6px;
+    line-height: 1.4;
+  }}
   .badge {{
     display: inline-block;
-    font-size: 10px;
-    font-weight: 600;
-    padding: 2px 8px;
-    border-radius: 4px;
-    background: rgba(255,255,255,0.2);
-    color: rgba(255,255,255,0.8);
-    margin-left: 4px;
+    font-size: 11px;
+    font-weight: 900;
+    padding: 3px 9px;
+    border-radius: 5px;
+    background: {ACCENT};
+    color: {INK};
+    border: 2px solid {INK};
+    margin-left: 6px;
     vertical-align: middle;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
   }}
   .arrows {{
     grid-column: 1 / -1;
     display: flex;
     justify-content: center;
-    gap: 48px;
-    padding: 8px 0;
+    gap: 60px;
+    padding: 12px 0;
   }}
   .arrow-item {{
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: 12px;
-    color: {CHARCOAL};
-    font-weight: 500;
+    gap: 12px;
+    font-size: 15px;
+    font-weight: 800;
+    color: {INK};
   }}
   .arrow-line {{
-    width: 40px;
-    height: 2px;
-    background: {CHARCOAL};
+    width: 60px;
+    height: 4px;
+    background: {INK};
     position: relative;
   }}
   .arrow-line::after {{
     content: '';
     position: absolute;
-    right: -1px;
-    top: 50%;
+    right: -1px; top: 50%;
     transform: translateY(-50%);
-    border-top: 4px solid transparent;
-    border-bottom: 4px solid transparent;
-    border-left: 6px solid {CHARCOAL};
+    border-top: 8px solid transparent;
+    border-bottom: 8px solid transparent;
+    border-left: 12px solid {INK};
   }}
   .arrow-line.dashed {{
-    background: repeating-linear-gradient(to right, {CHARCOAL} 0px, {CHARCOAL} 4px, transparent 4px, transparent 8px);
+    background: repeating-linear-gradient(
+      to right, {INK} 0px, {INK} 8px, transparent 8px, transparent 16px
+    );
   }}
 </style>
 </head>
@@ -1023,53 +1042,401 @@ def generate_grid(config):
 
 
 # ---------------------------------------------------------------------------
-# Screenshot
+# Stack diagram (vertical numbered cards)
+# ---------------------------------------------------------------------------
+
+def generate_stack(config):
+    """Generate a vertical stack of numbered hero cards.
+
+    Great for "3 lessons", "5 principles", "N reasons why" articles.
+
+    Config shape:
+    {
+        "type": "stack",
+        "width": 1200,
+        "title": "Optional heading shown above the stack",
+        "items": [
+            {
+                "number": "01",                     (optional - auto-numbered if omitted)
+                "icon": "search",                   (optional)
+                "color": "teal" | "#hex",           (optional, defaults to terracotta)
+                "name": "Item title",               (required)
+                "desc": "Longer description text"   (optional)
+            }
+        ]
+    }
+    """
+    title = config.get("title", "")
+    items = config.get("items", [])
+    width = config.get("width", 1200)
+    height = config.get("height", None)
+
+    title_html = f'<div class="stack-title">{title}</div>' if title else ""
+
+    item_htmls = []
+    for i, item in enumerate(items):
+        fill = resolve_color(item.get("color", "terracotta"))
+        ink_on = contrast_ink(fill)
+        number = item.get("number", f"{i + 1:02d}")
+        icon = item.get("icon", "")
+        name = item.get("name", "")
+        desc = item.get("desc", "")
+
+        icon_tile = (
+            f'<div class="icon-tile" style="background:{fill};">'
+            f'{render_icon(icon, size=34, color=ink_on)}'
+            f'</div>'
+        ) if icon else ""
+
+        desc_html = f'<div class="stack-desc">{desc}</div>' if desc else ""
+
+        item_htmls.append(f"""  <div class="stack-item">
+    <div class="stack-number">{number}</div>
+    {icon_tile}
+    <div class="stack-body">
+      <div class="stack-name">{name}</div>
+      {desc_html}
+    </div>
+  </div>""")
+
+    body_content = "\n".join(item_htmls)
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+{GOOGLE_FONTS}
+<style>
+{base_css(width, height)}
+  body {{ flex-direction: column; align-items: stretch; }}
+  .stack-title {{
+    font-size: 36px;
+    font-weight: 900;
+    color: {INK};
+    letter-spacing: -0.02em;
+    margin-bottom: 28px;
+    line-height: 1.1;
+  }}
+  .stack {{
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    width: 100%;
+  }}
+  .stack-item {{
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    background: {BG_WHITE};
+    border: 4px solid {INK};
+    border-radius: 20px;
+    padding: 24px 32px;
+    box-shadow: 7px 7px 0 {INK};
+  }}
+  .stack-number {{
+    font-size: 72px;
+    font-weight: 900;
+    color: {INK};
+    letter-spacing: -0.04em;
+    line-height: 0.9;
+    min-width: 110px;
+    font-variant-numeric: tabular-nums;
+  }}
+  .icon-tile {{
+    width: 64px; height: 64px;
+    border-radius: 14px;
+    border: 2.5px solid {INK};
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }}
+  .stack-body {{
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }}
+  .stack-name {{
+    font-size: 28px;
+    font-weight: 900;
+    color: {INK};
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }}
+  .stack-desc {{
+    font-size: 17px;
+    font-weight: 600;
+    color: {INK_SOFT};
+    line-height: 1.4;
+  }}
+</style>
+</head>
+<body>
+{title_html}
+<div class="stack">
+{body_content}
+</div>
+</body>
+</html>"""
+    return html
+
+
+# ---------------------------------------------------------------------------
+# Comparison diagram (two-column head-to-head)
+# ---------------------------------------------------------------------------
+
+def generate_comparison(config):
+    """Generate a two-column before/after or A-vs-B comparison.
+
+    Config shape:
+    {
+        "type": "comparison",
+        "width": 1200,
+        "title": "Optional heading above the comparison",
+        "divider": "VS",                            (optional, default "VS")
+        "left": {
+            "name": "Before",
+            "icon": "close",                        (optional)
+            "color": "github",                      (optional)
+            "items": [                              (list of strings OR {name, hint})
+                "Plain string item",
+                {"name": "Item with hint", "hint": "Longer explanation"}
+            ]
+        },
+        "right": { ... same shape ... }
+    }
+    """
+    title = config.get("title", "")
+    divider = config.get("divider", "VS")
+    left = config.get("left", {})
+    right = config.get("right", {})
+    width = config.get("width", 1200)
+    height = config.get("height", None)
+
+    title_html = f'<div class="cmp-title">{title}</div>' if title else ""
+
+    def render_column(col, side_class):
+        fill = resolve_color(col.get("color", "terracotta"))
+        ink_on = contrast_ink(fill)
+        name = col.get("name", "")
+        icon = col.get("icon", "")
+        items = col.get("items", [])
+
+        icon_tile = (
+            f'<div class="icon-tile" style="background:{fill};">'
+            f'{render_icon(icon, size=34, color=ink_on)}'
+            f'</div>'
+        ) if icon else ""
+
+        items_html = ""
+        for it in items:
+            if isinstance(it, str):
+                items_html += f'    <li class="cmp-item"><span class="cmp-item-name">{it}</span></li>\n'
+            else:
+                iname = it.get("name", "")
+                hint = it.get("hint", "")
+                hint_html = f'<div class="cmp-item-hint">{hint}</div>' if hint else ""
+                items_html += (
+                    f'    <li class="cmp-item">'
+                    f'<div class="cmp-item-name">{iname}</div>'
+                    f'{hint_html}</li>\n'
+                )
+
+        return f"""  <div class="cmp-col {side_class}">
+    <div class="cmp-head">
+      {icon_tile}
+      <div class="cmp-col-title">{name}</div>
+    </div>
+    <ul class="cmp-items">
+{items_html}    </ul>
+  </div>"""
+
+    left_html = render_column(left, "cmp-left")
+    right_html = render_column(right, "cmp-right")
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+{GOOGLE_FONTS}
+<style>
+{base_css(width, height)}
+  body {{ flex-direction: column; align-items: stretch; }}
+  .cmp-title {{
+    font-size: 36px;
+    font-weight: 900;
+    color: {INK};
+    letter-spacing: -0.02em;
+    margin-bottom: 28px;
+    text-align: center;
+    line-height: 1.1;
+  }}
+  .cmp-wrapper {{
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: stretch;
+    gap: 20px;
+    width: 100%;
+  }}
+  .cmp-col {{
+    background: {BG_WHITE};
+    border: 4px solid {INK};
+    border-radius: 20px;
+    padding: 28px 30px;
+    box-shadow: 7px 7px 0 {INK};
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }}
+  .cmp-head {{
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding-bottom: 16px;
+    border-bottom: 3px solid {INK};
+  }}
+  .icon-tile {{
+    width: 62px; height: 62px;
+    border-radius: 13px;
+    border: 2.5px solid {INK};
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }}
+  .cmp-col-title {{
+    font-size: 30px;
+    font-weight: 900;
+    color: {INK};
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }}
+  .cmp-items {{
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 0;
+    margin: 0;
+  }}
+  .cmp-item {{
+    padding: 14px 18px;
+    border: 3px solid {INK};
+    border-radius: 12px;
+    background: {BG_WHITE};
+    position: relative;
+  }}
+  .cmp-item-name {{
+    font-size: 18px;
+    font-weight: 800;
+    color: {INK};
+    letter-spacing: -0.01em;
+    line-height: 1.3;
+    display: block;
+  }}
+  .cmp-item-hint {{
+    font-size: 15px;
+    font-weight: 600;
+    color: {INK_SOFT};
+    margin-top: 5px;
+    line-height: 1.4;
+  }}
+  .cmp-divider {{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }}
+  .cmp-divider-pill {{
+    font-size: 26px;
+    font-weight: 900;
+    color: {INK};
+    background: {ACCENT};
+    padding: 14px 22px;
+    border: 3px solid {INK};
+    border-radius: 14px;
+    letter-spacing: 0.02em;
+    box-shadow: 5px 5px 0 {INK};
+  }}
+</style>
+</head>
+<body>
+{title_html}
+<div class="cmp-wrapper">
+{left_html}
+  <div class="cmp-divider">
+    <div class="cmp-divider-pill">{divider}</div>
+  </div>
+{right_html}
+</div>
+</body>
+</html>"""
+    return html
+
+
+# ---------------------------------------------------------------------------
+# Screenshot helpers
 # ---------------------------------------------------------------------------
 
 def screenshot_html(html, output_path, width, height=None):
-    """Render HTML and take a screenshot with Playwright.
+    """Render HTML and capture as PNG.
 
-    When height is specified, uses a fixed viewport and clips to exact
-    dimensions (no full_page). Otherwise falls back to full_page=True.
+    If height is provided, clips to exact dimensions (fixed aspect ratio).
+    If height is None, measures the content height after render and clips
+    to fit tightly — no dead space, no extra viewport padding.
     """
-    vp_height = height if height else 800
+    vp_height = height if height else 1400  # roomy viewport for auto-sized content
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page(viewport={"width": width, "height": vp_height})
         page.set_content(html)
         page.wait_for_function("document.fonts.ready.then(() => true)")
-        page.wait_for_timeout(200)
+        page.wait_for_timeout(300)
+
         if height:
             page.screenshot(
                 path=output_path,
                 clip={"x": 0, "y": 0, "width": width, "height": height},
             )
         else:
-            page.screenshot(path=output_path, full_page=True)
+            # Measure the actual bottom of the rendered content by walking
+            # body's direct children. scrollHeight and the body's bounding
+            # box can both include viewport-stretched whitespace, so we
+            # compute maxBottom of real children + body's bottom padding.
+            measured = page.evaluate("""
+                () => {
+                    const children = Array.from(document.body.children);
+                    if (!children.length) return document.body.offsetHeight;
+                    let maxBottom = 0;
+                    for (const c of children) {
+                        const r = c.getBoundingClientRect();
+                        if (r.bottom > maxBottom) maxBottom = r.bottom;
+                    }
+                    const bs = getComputedStyle(document.body);
+                    const pb = parseFloat(bs.paddingBottom) || 0;
+                    return Math.ceil(maxBottom + pb);
+                }
+            """)
+            measured = int(measured)
+            if measured > vp_height:
+                page.set_viewport_size({"width": width, "height": measured})
+                page.wait_for_timeout(150)
+            page.screenshot(
+                path=output_path,
+                clip={"x": 0, "y": 0, "width": width, "height": measured},
+            )
         browser.close()
     print(f"Diagram generated: {output_path}")
 
 
 def screenshot_html_gif(html, output_path, width, height, duration=5500, fps=10):
-    """Render animated HTML and capture as GIF via frame screenshots + ffmpeg.
-
-    Requires ffmpeg to be installed. Also saves a static PNG of the final frame
-    at the same path with _static.png suffix.
-
-    Args:
-        html: HTML content string
-        output_path: Output GIF path (e.g., diagram.gif)
-        width: Viewport width
-        height: Viewport height (required for GIF)
-        duration: Total animation duration in ms (default 5500)
-        fps: Frames per second (default 10)
-    """
+    """Render animated HTML and capture as GIF via ffmpeg."""
     import subprocess
     import tempfile
     import os
 
     if not height:
-        height = 627  # default to LinkedIn landscape
+        height = 627
 
     frame_interval = 1000 // fps
     total_frames = duration // frame_interval
@@ -1091,7 +1458,6 @@ def screenshot_html_gif(html, output_path, width, height, duration=5500, fps=10)
                 )
                 page.wait_for_timeout(frame_interval)
 
-            # Save static final frame
             static_path = output_path.rsplit(".", 1)[0] + "_static.png"
             page.wait_for_timeout(300)
             page.screenshot(
@@ -1101,7 +1467,6 @@ def screenshot_html_gif(html, output_path, width, height, duration=5500, fps=10)
             print(f"Static frame: {static_path}")
             browser.close()
 
-        # Create GIF with ffmpeg
         frame_pattern = os.path.join(tmpdir, "frame_%04d.png")
         ffmpeg_cmd = [
             "ffmpeg", "-y",
@@ -1118,7 +1483,6 @@ def screenshot_html_gif(html, output_path, width, height, duration=5500, fps=10)
             print("Error: ffmpeg not found. Install it: brew install ffmpeg", file=sys.stderr)
             sys.exit(1)
         except subprocess.CalledProcessError:
-            # Fallback to simpler ffmpeg command
             ffmpeg_cmd_simple = [
                 "ffmpeg", "-y",
                 "-framerate", str(fps),
@@ -1139,18 +1503,22 @@ GENERATORS = {
     "pipeline": generate_pipeline,
     "sequence": generate_sequence,
     "grid": generate_grid,
+    "stack": generate_stack,
+    "comparison": generate_comparison,
 }
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate beautiful article diagrams (pipeline, sequence, grid)",
+        description="Generate beautiful article diagrams (pipeline, sequence, grid, stack, comparison)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Diagram types:
-  pipeline  - Horizontal flow of service cards with connectors
-  sequence  - Sequence diagram with actors, lifelines, messages, phases
-  grid      - Card grid with items and connection arrows
+  pipeline    - Horizontal flow of bold cards with connectors
+  sequence    - Sequence diagram with actors, lifelines, messages, phases
+  grid        - Card grid with items and connection arrows
+  stack       - Vertical numbered hero cards (3 lessons, 5 principles, N reasons)
+  comparison  - Two-column head-to-head (before/after, A vs B)
 
 Examples:
   %(prog)s --config architecture.json -o diagram.png
@@ -1189,10 +1557,9 @@ Examples:
         Path(args.save_html).write_text(html, encoding="utf-8")
         print(f"HTML saved: {args.save_html}")
 
-    width = config.get("width", 900)
+    width = config.get("width", 1200)
     height = config.get("height", None)
 
-    # Use GIF mode if --gif flag or config has "animated": true
     use_gif = args.gif or config.get("animated", False)
     duration = config.get("gif_duration", args.gif_duration)
     fps = config.get("gif_fps", args.gif_fps)

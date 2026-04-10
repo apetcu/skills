@@ -1,11 +1,34 @@
 ---
 name: beautiful-diagrams
-description: "Generate beautiful article diagrams (pipeline, sequence, grid) using HTML + Playwright. Dark minimal design, wireframe service cards, structural grid, near-monochrome palette. Use when creating architecture diagrams, sequence diagrams, token/secret maps, or any visual diagram for articles. Triggers: 'create diagram', 'generate diagram', 'make architecture diagram', 'build sequence diagram', 'create a visual', 'diagram for article'."
+description: "Generate beautiful article diagrams using HTML + Playwright. Five layouts: pipeline (horizontal flow), sequence (actors + messages), grid (2-col cards), stack (numbered hero cards), comparison (before/after). Bold white carousel style with thick black borders, terracotta accents, chunky rounded cards, and LARGE Inter 900 typography. Use when creating architecture diagrams, sequence diagrams, numbered lists, before/after comparisons, or any visual for articles. Triggers: 'create diagram', 'generate diagram', 'make architecture diagram', 'build sequence diagram', 'numbered list diagram', 'comparison diagram', 'create a visual', 'diagram for article'."
 ---
 
 # Beautiful Diagrams
 
-Generate professional article diagrams using HTML + Playwright screenshots. Dark minimal design: flat dark background (#0F0F0F), structural grid, wireframe service cards with accent-color borders, Inter bold typography, near-monochrome palette.
+Generate professional article diagrams using HTML + Playwright screenshots.
+
+**Style: bold white carousel.** White background, thick black borders (3-4px), chunky rounded cards with 6px drop shadows, terracotta (`#E27D5B`) icon tiles, Inter 900 typography at large sizes. Designed to be readable in-feed on LinkedIn / Substack, not a reader-hostile monitoring UI.
+
+**Design tokens:**
+
+| Token | Value | Use |
+|-------|-------|-----|
+| `BG_WHITE` | `#FFFFFF` | Canvas + card fill |
+| `INK` | `#0A0A0A` | Text, borders, arrows |
+| `INK_SOFT` | `#2A2A2A` | Secondary text |
+| `INK_MUTED` | `#5A5A5A` | Hints, tertiary text |
+| `ACCENT` | `#E27D5B` | Icon tiles, connector chips, badges |
+| `ACCENT_SOFT` | `#F3D4C6` | Note boxes |
+
+**Typography:** Inter (400–900 weights), loaded from Google Fonts. Headings use weight 900 at 24-28px. Body text is 14-18px. Connector labels and badges are uppercase bold at 11-14px on accent pills. Nothing smaller than 13px.
+
+**Rules:**
+1. NEVER use small fonts. If content doesn't fit, increase the canvas width or drop the fixed height — don't shrink the text.
+2. Thick borders (3-4px) on everything. No hairlines.
+3. Cards have a 6-7px solid black offset shadow (no blur, no gradients).
+4. Icon tiles are rounded squares (14px radius) with 4px black borders and terracotta fill.
+5. Connector labels are small uppercase pills on terracotta with black borders.
+6. Use the `color` field to override an individual card/node's accent. Default is terracotta.
 
 ## Requirements
 
@@ -190,6 +213,83 @@ Card grid with items inside each card, plus optional connection arrows. Great fo
 - `from` / `to` - Label text on each side of the arrow
 - `dashed` - Dashed line style (default false)
 
+### 4. Stack (Numbered Hero Cards)
+
+Vertical stack of big numbered cards. Perfect for "3 lessons", "5 principles", "N reasons why" articles — each item gets full-width treatment with a large 72px number, icon tile, bold title, and descriptive subtitle.
+
+```json
+{
+  "type": "stack",
+  "width": 1200,
+  "title": "Optional heading above the stack",
+  "items": [
+    {
+      "number": "01",
+      "icon": "close",
+      "color": "terracotta",
+      "name": "Item title",
+      "desc": "Longer explanation that wraps to multiple lines if needed."
+    },
+    {
+      "icon": "activity",
+      "color": "teal",
+      "name": "Second item",
+      "desc": "number is auto-generated when omitted"
+    }
+  ]
+}
+```
+
+**Item options:**
+- `number` - Display number (optional, auto-generated as "01", "02", ... if omitted)
+- `icon` - Carbon icon name or emoji (optional)
+- `color` - Accent color for the icon tile (optional, default terracotta)
+- `name` - Item title, required
+- `desc` - Longer description (optional)
+
+**Sizing tip:** use `width: 1200` and omit `height` — stack auto-sizes to content. For 3-item stacks expect ~700px height, for 5-item ~1100px.
+
+### 5. Comparison (Before / After, A vs B)
+
+Two-column head-to-head comparison with a divider pill in the middle. Use for before/after migrations, naive vs optimized approaches, old vs new workflows.
+
+```json
+{
+  "type": "comparison",
+  "width": 1200,
+  "title": "Optional heading",
+  "divider": "VS",
+  "left": {
+    "name": "Before",
+    "icon": "close",
+    "color": "github",
+    "items": [
+      "Simple string item",
+      {"name": "Item with hint", "hint": "Longer explanation under the name"}
+    ]
+  },
+  "right": {
+    "name": "After",
+    "icon": "checkmark",
+    "color": "teal",
+    "items": [
+      "Better approach",
+      {"name": "With context", "hint": "why it's better"}
+    ]
+  }
+}
+```
+
+**Column options:**
+- `name` - Column header title, required
+- `icon` - Carbon icon name or emoji (optional)
+- `color` - Accent color for the icon tile (optional, default terracotta)
+- `items` - List of strings OR `{name, hint}` objects
+
+**Top-level options:**
+- `title` - Heading above the comparison (optional)
+- `divider` - Text shown in the center pill (default `"VS"`). Use `"→"`, `"THEN"`, `"NOW"`, etc.
+
 ## Color Presets
 
 Use these preset names in the `color` field:
@@ -215,9 +315,9 @@ Use these preset names in the `color` field:
 | `cobalt` | Deep blue | Authority, headers |
 | `bronze` | Bronze | Achievements |
 
-You can also use raw hex colors: `"#FF5733"` or gradient pairs: `["#FF5733", "#C70039"]`
+You can also use raw hex colors: `"#FF5733"`. Legacy two-item lists `["#FF5733", "#C70039"]` are still accepted (first value wins).
 
-**Note:** Color presets now control the card's border accent color (at 20% opacity), not gradient fill.
+**Default:** If `color` is omitted, the card uses `terracotta` (`#E27D5B`). The color fills the icon tile; card borders and text are always solid black.
 
 ## CLI Options
 
@@ -295,26 +395,33 @@ echo '{"type":"pipeline","nodes":[{"name":"A","icon":"📦","color":"github"},{"
   python scripts/diagram-generator.py --stdin -o quick-diagram.png
 ```
 
-## Fixed-Size Diagrams (IMPORTANT)
+## Sizing (IMPORTANT)
 
-**Always set `height` in the JSON config for article images.** Without it, the generator uses `full_page: true` which captures the content height and often results in diagrams with dead space or content crammed at the top.
+The bold style uses large typography and chunky cards, so the default canvas should be WIDER than the old dark-minimal style. Recommended starting points:
 
-For LinkedIn article images, always use:
-- `"width": 1200, "height": 627` (landscape 16:9)
-- `"width": 1080, "height": 1080` (square)
-- `"width": 1080, "height": 1350` (carousel 4:5)
+- **Pipeline (horizontal flow)**: `"width": 1400-1600`, `"height": 520-600`. For 4+ nodes prefer 1500+.
+- **Grid (2 columns × 2 rows)**: `"width": 1200`, OMIT `height` (let it auto-size to content).
+- **Grid (2 × 3+ rows)**: `"width": 1200`, omit height.
+- **Sequence**: `"width": 1200-1400`, omit height for short flows, set 800-1000 for long ones.
+- **Stack (numbered cards)**: `"width": 1200`, omit height. 3-item stacks land ~700px, 5-item ~1100px.
+- **Comparison (two columns)**: `"width": 1200-1400`, omit height. Each column should hold 3-5 items for best balance.
 
-When `height` is set, the body gets flexbox centering and the screenshot clips to the exact dimensions. Content fills the canvas properly with no dead space.
+**Rule of thumb:** if content looks cramped, INCREASE the width. Do NOT shrink the font sizes — they are deliberately large so the diagrams are readable in-feed on LinkedIn and Substack.
+
+**When to set `height`:**
+- Fixed aspect ratio for a cover image (e.g., 1200×627 for LinkedIn landscape).
+- GIF mode — height is required.
+- Otherwise omit it and let the content define the height.
 
 ## Tips
 
-- **Always set `height`** in configs for article images to avoid dead space
-- Keep node/actor names short (1-2 words) for best readability
-- Use `components` in pipeline nodes to show sub-services within a larger service
-- Use `phase` steps in sequence diagrams to label sections
-- Grid diagrams with `connections` work best with 2 columns
-- The `--save-html` option is useful for manual tweaks in a browser before screenshotting
-- Use `trigger: true` on the first pipeline node for user-initiated flows
+- Increase canvas width before shrinking content. Small fonts are a regression.
+- Keep node/actor names short (1-3 words) — the bold weight eats horizontal space fast.
+- Use `components` in pipeline nodes to show sub-services within a larger card.
+- Use `phase` steps in sequence diagrams to label sections (renders as an accent pill).
+- Grid diagrams with `connections` work best with 2 columns.
+- `--save-html` saves the generated HTML for manual tweaks in a browser.
+- Use `trigger: true` on the first pipeline node for user-initiated flows.
 
 ## Cost
 
