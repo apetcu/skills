@@ -6,6 +6,10 @@
   ledger.py show [--repo owner/name]     human-readable table
   ledger.py attempted owner/name         issue numbers already attempted, one per line
   ledger.py prs                          "repo<TAB>pr_url" for every opened PR
+  ledger.py config [--shell]             effective settings (env > $DONATE_HOME/config > defaults)
+
+Config keys: DONATE_ACCOUNT (required), DONATE_COUNT (default 5, or "unlimited"),
+DONATE_MAX_PR_PER_REPO (default 1), DONATE_TOP (default 15).
 """
 import argparse
 import datetime
@@ -24,21 +28,57 @@ def ledger_path():
     return os.path.join(donate_home(), "ledger.json")
 
 
-def contribution_account():
-    """GitHub login that owns the PRs and forks: $DONATE_ACCOUNT, else DONATE_ACCOUNT=<login>
-    in $DONATE_HOME/config. Raises LookupError when neither is set."""
-    login = (os.environ.get("DONATE_ACCOUNT") or "").strip()
-    if login:
-        return login
+UNLIMITED = {"unlimited", "all", "0", "none", "inf"}
+DEFAULTS = {"DONATE_COUNT": "5", "DONATE_MAX_PR_PER_REPO": "1", "DONATE_TOP": "15"}
+
+
+def read_config():
+    """KEY=VALUE pairs from $DONATE_HOME/config; blank lines and # comments are ignored."""
     path = os.path.join(donate_home(), "config")
+    out = {}
     if os.path.exists(path):
         with open(path, encoding="utf-8") as f:
             for line in f:
-                key, _, value = line.strip().partition("=")
-                if key.strip() == "DONATE_ACCOUNT" and value.strip():
-                    return value.strip().strip("\"'")
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                key, _, value = line.partition("=")
+                if value.strip():
+                    out[key.strip()] = value.strip().strip("\"'")
+    return out
+
+
+def setting(name, config=None):
+    """Environment variable, else config file, else built-in default (None if there is none)."""
+    config = read_config() if config is None else config
+    return (os.environ.get(name) or "").strip() or config.get(name) or DEFAULTS.get(name)
+
+
+def contribution_account():
+    """GitHub login that owns the PRs and forks. Raises LookupError when not configured."""
+    login = setting("DONATE_ACCOUNT")
+    if login:
+        return login
     raise LookupError("no contribution account configured: set DONATE_ACCOUNT or write "
-                      "DONATE_ACCOUNT=<login> to %s" % path)
+                      "DONATE_ACCOUNT=<login> to %s" % os.path.join(donate_home(), "config"))
+
+
+def _count(value, name):
+    if str(value).strip().lower() in UNLIMITED:
+        return None
+    try:
+        n = int(value)
+    except ValueError:
+        raise ValueError("%s must be a number or 'unlimited', got %r" % (name, value))
+    return n if n >= 1 else None
+
+
+def settings():
+    """Effective run settings: count (None = unlimited), max_pr_per_repo, top."""
+    cfg = read_config()
+    return {"count": _count(setting("DONATE_COUNT", cfg), "DONATE_COUNT"),
+            "max_pr_per_repo": int(setting("DONATE_MAX_PR_PER_REPO", cfg)),
+            "top": int(setting("DONATE_TOP", cfg))}
 
 
 def load(path=None):
@@ -103,7 +143,27 @@ def main(argv=None):
     p = sub.add_parser("attempted")
     p.add_argument("repo")
     sub.add_parser("prs")
+    p = sub.add_parser("config")
+    p.add_argument("--shell", action="store_true", help="print KEY='value' lines for eval")
     a = ap.parse_args(argv)
+
+    if a.cmd == "config":
+        cfg = read_config()
+        try:
+            st = settings()
+        except ValueError as e:
+            print("ledger: %s" % e, file=sys.stderr)
+            return 2
+        values = [("DONATE_ACCOUNT", setting("DONATE_ACCOUNT", cfg) or ""),
+                  ("DONATE_COUNT", "unlimited" if st["count"] is None else str(st["count"])),
+                  ("DONATE_MAX_PR_PER_REPO", str(st["max_pr_per_repo"])),
+                  ("DONATE_TOP", str(st["top"]))]
+        if a.shell:
+            for key, value in values:
+                print("%s='%s'" % (key, value.replace("'", "'\\''")))
+        else:
+            print(json.dumps(dict(values), indent=2))
+        return 0
 
     data = load()
     if a.cmd == "add":
