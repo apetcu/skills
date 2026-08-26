@@ -14,6 +14,7 @@ skills/
 │   ├── beautiful-ui/         # Glassmorphism UI with Next.js + Tailwind v4
 │   ├── beautiful-diagrams/   # Article diagrams via HTML + Playwright
 │   ├── demo-builder/         # Scaffold full Next.js + Tailwind demo projects
+│   ├── donate/               # Fix bugs in star-history trending repos, open PRs
 │   ├── romanian-humanizer/   # Strip AI markers from Romanian text
 │   └── substack-publisher/   # Publish markdown to Substack
 └── README.md
@@ -26,6 +27,7 @@ skills/
 | **beautiful-ui** | Build glassmorphism dark-mode interfaces with Next.js and Tailwind CSS v4: translucent surfaces, luminous palettes, Framer Motion, and production-ready code. |
 | **beautiful-diagrams** | Generate article-ready diagrams (pipelines, sequences, grids) using HTML + Playwright screenshots—canvas background, gradient cards, clean typography. |
 | **demo-builder** | Scaffold complete demo projects from a description: full working Next.js + Tailwind app, ready for Vercel deployment, with optional database support. |
+| **donate** | Donate engineering time to open source: pick the star-history Weekly top repos, fix ~5 small verified bugs, open PRs from your personal account, and leave `~/donate` clean. |
 | **romanian-humanizer** | Detect and remove AI-generated markers from Romanian text. Identifies 26 patterns (12 Romanian-specific + 14 universal) and 4 style markers to make text sound native. |
 | **substack-publisher** | Publish markdown posts to Substack as drafts or articles; converts markdown to Substack’s ProseMirror JSON and supports dry-run. |
 
