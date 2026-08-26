@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Prepare $DONATE_HOME for a run: switch gh to the contribution account (remembering the previous one),
 # create work/ and runs/, snapshot free disk. Prints one JSON line.
-# Env: DONATE_HOME (default ~/donate); DONATE_ACCOUNT, else DONATE_ACCOUNT=<login> in $DONATE_HOME/config
+# Env: DONATE_HOME (default ~/donate). Settings (env > $DONATE_HOME/config > defaults):
+#   DONATE_ACCOUNT (required), DONATE_COUNT (5 or "unlimited"), DONATE_MAX_PR_PER_REPO (1), DONATE_TOP (15)
 set -euo pipefail
 DONATE_HOME="${DONATE_HOME:-$HOME/donate}"
-ACCOUNT="${DONATE_ACCOUNT:-}"
-if [ -z "$ACCOUNT" ] && [ -f "$DONATE_HOME/config" ]; then
-  ACCOUNT="$(sed -n 's/^[[:space:]]*DONATE_ACCOUNT[[:space:]]*=[[:space:]]*//p' "$DONATE_HOME/config" | tail -1 | tr -d '"'"'"' ')"
-fi
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+settings="$(python3 "$HERE/ledger.py" config --shell)" || { echo "preflight: invalid settings (see above)" >&2; exit 2; }
+eval "$settings"
+ACCOUNT="$DONATE_ACCOUNT"
 if [ -z "$ACCOUNT" ]; then
   echo "preflight: no contribution account configured — set DONATE_ACCOUNT or write DONATE_ACCOUNT=<login> to $DONATE_HOME/config" >&2
   exit 2
@@ -31,5 +32,6 @@ id="$(gh api user --jq .id)"
 name="$(gh api user --jq '.name // .login')"
 free_kb="$(df -k "$HOME" | awk 'NR==2{print $4}')"
 leftover="$(ls -A "$DONATE_HOME/work" | wc -l | tr -d ' ')"
-printf '{"login":"%s","email":"%s+%s@users.noreply.github.com","name":"%s","previous_account":"%s","donate_home":"%s","free_gb":%d,"leftover_workdirs":%d}\n' \
-  "$login" "$id" "$login" "$name" "$prev" "$DONATE_HOME" "$((free_kb / 1024 / 1024))" "$leftover"
+count_json="$DONATE_COUNT"; [ "$count_json" = "unlimited" ] && count_json='"unlimited"'
+printf '{"login":"%s","email":"%s+%s@users.noreply.github.com","name":"%s","previous_account":"%s","donate_home":"%s","free_gb":%d,"leftover_workdirs":%d,"count":%s,"max_pr_per_repo":%d,"top":%d}\n' \
+  "$login" "$id" "$login" "$name" "$prev" "$DONATE_HOME" "$((free_kb / 1024 / 1024))" "$leftover" "$count_json" "$DONATE_MAX_PR_PER_REPO" "$DONATE_TOP"

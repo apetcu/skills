@@ -19,8 +19,9 @@ stdlib Python 3.9 / bash and print `--help`.
 
 | Command | Effect |
 |---|---|
-| `/donate` | top 15 weekly repos → up to 5 PRs |
-| `/donate --count 3` | stop after 3 PRs |
+| `/donate` | top `TOP` weekly repos → up to `COUNT` PRs (defaults 15 and 5, see Settings) |
+| `/donate --count 2` | stop after 2 PRs (a flag beats the config file) |
+| `/donate --count unlimited` | keep going until the issue queue is empty |
 | `/donate --top 20` | consider more repos |
 | `/donate --repo owner/name` | skip discovery, work only in that repo |
 | `/donate --dry-run` | everything except fork/push/PR; fixes saved as `.patch` files |
@@ -28,13 +29,26 @@ stdlib Python 3.9 / bash and print `--help`.
 | `/donate --prune-forks` | delete forks whose PRs are all merged/closed, then exit |
 | `/donate --keep` | don't delete clones (debugging only) |
 
+## Settings — `~/donate/config`
+
+```
+DONATE_ACCOUNT=<login>      # required: the GitHub account that owns the PRs and forks
+DONATE_COUNT=5              # PRs per run; unlimited (or all / 0) = until the queue is empty
+DONATE_MAX_PR_PER_REPO=1    # per repo per run — keep 1 unless a maintainer asked for more
+DONATE_TOP=15               # leaderboard repos to consider
+```
+
+Precedence: command-line flag > environment variable > `~/donate/config` > default. Preflight
+reports the effective values as `COUNT`, `MAX_PR_PER_REPO` and `TOP`; a flag such as
+`--count 2` or `--count unlimited` overrides the reported value for this run.
+
 ## Workflow
 
 ### 0. Preflight
 
 ```bash
 eval "$(bash $S/preflight.sh | python3 -c 'import json,sys; d=json.load(sys.stdin); print(" ".join("%s=%r"%(k.upper(),v) for k,v in d.items()))')"
-# → LOGIN EMAIL NAME PREVIOUS_ACCOUNT DONATE_HOME FREE_GB LEFTOVER_WORKDIRS
+# → LOGIN EMAIL NAME PREVIOUS_ACCOUNT DONATE_HOME FREE_GB LEFTOVER_WORKDIRS COUNT MAX_PR_PER_REPO TOP
 ```
 
 `preflight.sh` switches `gh` to the **contribution account** — `DONATE_ACCOUNT` in the
@@ -51,7 +65,7 @@ will fail mid-install. Record `FREE_GB` for the report. `RUN=~/donate/runs/$(dat
 ### 1. Discover
 
 ```bash
-python3 $S/leaderboard.py --top 15 > $RUN-leaderboard.json
+python3 $S/leaderboard.py --top "$TOP" > $RUN-leaderboard.json
 ```
 
 Exit 2 means star-history changed its markup: read https://www.star-history.com/ yourself,
@@ -70,7 +84,8 @@ contributions, repos where `$LOGIN` already has an open PR, and
 issues that are assigned, linked to a PR, labeled as feature/question/discussion, older than 90
 days, over 15 comments, or too short to contain a repro. It never substitutes judgment for
 reading: for each `status: ok` repo, open the top issues with
-`gh issue view N --repo R --comments` and build a **queue of ~8 issues, max 2 per repo**,
+`gh issue view N --repo R --comments` and build a **queue of about `COUNT + 3` issues** (`unlimited`:
+every suitable issue), **at most `MAX_PR_PER_REPO + 1` per repo** so an abandonment has a fallback,
 ordered by how confident you are that the fix is small and testable. If `ai_policy` is
 `disclose`, the disclosure line in the PR body is mandatory (it is always present anyway).
 
@@ -149,7 +164,8 @@ tests need secrets, Docker, GPU or external services · install > 5 GB or fails 
 the issue appeared · 45 minutes in and the fix is still speculative. Abandoning is normal;
 the queue has slack for it.
 
-Stop the loop when `--count` PRs are open or the queue is empty.
+Stop the loop when `COUNT` PRs are open (`unlimited`: when the queue is empty), skip a repo once
+it has `MAX_PR_PER_REPO` PRs from this run, and stop early if free disk drops under 10 GB.
 
 ### 4. Cleanup — always, even after errors
 
@@ -214,7 +230,8 @@ Delete the clone again and run `bash $S/cleanup.sh`. `/donate --followup` runs o
   check (`gh api repos/O/R --jq .license.spdx_id`).
 - PRs, commits and forks belong to the contribution account (`$LOGIN` from preflight), never to
   whatever account happened to be active. Never `git config --global`; never push to `upstream`;
-  never force-push; never open more than one PR per repo per run.
+  never force-push; never open more than `MAX_PR_PER_REPO` PRs per repo per run (default 1 — an
+  unlimited run spreads across repos instead of flooding one maintainer).
 - Delete only inside `~/donate/work`. Never touch global package caches or other checkouts.
 - Every PR: reproduced, tested, minimal, links its issue, carries the AI-assistance line.
 - Respect repo policy: `ai_policy: ban` repos are skipped by the script — don't override it;
@@ -237,3 +254,4 @@ Delete the clone again and run `bash $S/cleanup.sh`. `/donate --followup` runs o
 | "License is 'Other' but the code is public, it's fine" | Public ≠ open. Not on the allowlist → skip. |
 | "No bot comments after 3 minutes, skip the rest of the wait" | Bots take up to 10 minutes. Let the timer finish. |
 | "The bot flagged it, so I'll change it" | Read the code first. Reply why when the bot is wrong. |
+| "Unlimited means several PRs in the same repo" | `MAX_PR_PER_REPO` still applies. Spread across repos. |

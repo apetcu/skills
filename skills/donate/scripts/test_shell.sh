@@ -31,6 +31,13 @@ out="$("$HERE/preflight.sh")"
 [ "$(cat "$DONATE_HOME/.gh-previous-account")" = "work-account" ] || fail "previous account not recorded"
 echo "$out" | grep -q '"email":"4242+oss-account@users.noreply.github.com"' || fail "preflight json missing email: $out"
 echo "$out" | grep -q '"login":"oss-account"' || fail "preflight json missing login"
+echo "$out" | grep -q '"count":5,"max_pr_per_repo":1,"top":15' || fail "preflight json missing default settings: $out"
+
+# settings from config + env override; unlimited is reported as a word
+printf 'DONATE_ACCOUNT=oss-account\nDONATE_COUNT=unlimited\nDONATE_TOP=20\n' > "$DONATE_HOME/config"
+out="$(DONATE_MAX_PR_PER_REPO=2 "$HERE/preflight.sh")"
+echo "$out" | grep -q '"count":"unlimited","max_pr_per_repo":2,"top":20' || fail "preflight json settings wrong: $out"
+printf 'DONATE_ACCOUNT=oss-account\n' > "$DONATE_HOME/config"
 [ -d "$DONATE_HOME/work" ] && [ -d "$DONATE_HOME/runs" ] || fail "dirs not created"
 
 # preflight is idempotent: already on the account → no marker overwrite
